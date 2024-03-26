@@ -32,7 +32,7 @@ import warnings
 # from batch_effect_removal import remove_batch_effect_all, get_berm
 from features_selection import get_feature_selection_method
 from features_selection_sparse import keep_only_not_zeros_sparse, keep_not_zeros_sparse, \
-    process_sparse_data, count_array, make_lists, split_sparse, MultiKeepNotFunctionsSparse, split_df
+    process_sparse_data, count_array, make_lists, split_sparse, MultiKeepNotFunctionsSparse
 from scipy.signal import find_peaks
 from statsmodels.nonparametric.smoothers_lowess import lowess
 from msalign import msalign
