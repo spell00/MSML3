@@ -11,10 +11,10 @@ June 2021
 from datetime import datetime
 
 start_time = datetime.now()
-import re
+# import re
 import os
 import time
-import scipy
+# import scipy
 import logging
 import multiprocessing
 from multiprocessing import set_start_method, get_context, Queue, current_process, Process
@@ -26,9 +26,9 @@ from matplotlib import cm
 from pickle import dump
 from scipy.sparse import csr_matrix, vstack, hstack, csc_matrix
 from tqdm import tqdm
-import nibabel as nib
+# import nibabel as nib
 import warnings
-import queue
+# import queue
 from batch_effect_removal import remove_batch_effect_all, get_berm
 from features_selection import get_feature_selection_method
 from features_selection_sparse import keep_only_not_zeros_sparse, keep_not_zeros_sparse, \
@@ -41,36 +41,12 @@ warnings.filterwarnings("ignore")
 logging.basicConfig(filename='make_tensors_ms2.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
 
 
-def do_job(tasks_to_accomplish, tasks_that_are_done, concat):
-    while True:
-        try:
-            '''
-                try to get task from the queue. get_nowait() function will 
-                raise queue.Empty exception if the queue is empty. 
-                queue(False) function would do the same task also.
-            '''
-            task = tasks_to_accomplish.get_nowait()
-        except queue.Empty:
-
-            break
-        else:
-            '''
-                if no exception has been raised, add the task completion 
-                message to task_that_are_done queue
-            '''
-            # print(task)
-            concat.process(int(task))
-            tasks_that_are_done.put(f"{task} is done by {current_process().name}")
-            # time.sleep(.5)
-    return True
-
-
 class MakeTensorsMultiprocess:
     """
     Concat
     """
 
-    def __init__(self, tsv_list, labels_list, bins, path):
+    def __init__(self, tsv_list, labels_list, bins, path, args):
         """
         :param tsv_list:
         :param labels_list:
@@ -170,8 +146,6 @@ class MakeTensorsMultiprocess:
                 else:
                     tmp_rt -= self.bins['rt_bin_post'] / 2
                 rt = tmp_rt
-                # if not self.mz_shift:
-                # mz = np.floor(np.round(mz/mz_bin, 8))*mz_bin
             else:
                 rt = np.floor(np.round(rt / self.bins['rt_bin_post'], 8)) * self.bins['rt_bin_post']
 
@@ -182,10 +156,7 @@ class MakeTensorsMultiprocess:
                 else:
                     tmp_mz -= self.bins['mz_bin_post'] / 2
                 mz = tmp_mz
-                # if not self.rt_shift:
-                # rt = np.floor(np.round(rt/rt_bin, 8))*rt_bin
             else:
-                # rt = np.floor(np.round(rt/rt_bin, 8))*rt_bin
                 mz = np.floor(np.round(mz / self.bins['mz_bin_post'], 8)) * self.bins['mz_bin_post']
             if self.bins['rt_rounding'] != 0:
                 rt = np.round(rt, self.bins['rt_rounding'])
@@ -193,6 +164,7 @@ class MakeTensorsMultiprocess:
                 mz = np.round(mz, self.bins['mz_rounding'])
             # final[min_parent][mz][rt] += np.log1p(intensity)
             if self.is_sparse and prev_rt != rt:
+                # Change todense on mz rather than rt
                 if prev_rt != -1:
                     final[min_parent][prev_rt] = final[min_parent][prev_rt].astype(spdtypes)
                 final[min_parent][rt] = final[min_parent][rt].sparse.to_dense()
@@ -216,7 +188,7 @@ class MakeTensorsMultiprocess:
                     mask = find_peaks(final[df].iloc[ii], height=0.1, distance=2)
                     # Make all values 0 except the ones that are in mask
                     final[df].iloc[ii] = pd.Series([final[df].iloc[ii].values[i] if i in mask[0] else 0 for i in range(len(final[df].iloc[ii]))])
-        os.makedirs(f"{self.path}/nibabel/", exist_ok=True)
+        # os.makedirs(f"{self.path}/nibabel/", exist_ok=True)
         if self.save:
             # img = nib.Nifti1Image(np.stack(list(final.values())), np.eye(4))
             # img.uncache()
@@ -225,6 +197,8 @@ class MakeTensorsMultiprocess:
                  enumerate(zip(final, list(final.values())))]
             # del img
         # df = np.stack(list(final.values()))
+        # for x in list(final.keys()):
+        #     final[x] = csc_matrix(final[x])
         total_memory = np.sum([final[x].memory_usage().sum() for x in list(final.keys())]) / 2 ** 20
         total_time = (time.time() - startTime) / 60
         print(
@@ -294,16 +268,7 @@ def adjust_tensors(list_matrices, max_features, args_dict):
                         )
                     else:
                         matrix[x] = csc_matrix(matrix[x])
-                # try:
-                # Stacking csr matrices should be faster than coo (no transform after hstack) or csc (using tocsr)
                 matrices[i] = hstack([matrix[x].reshape(1, -1) for x in list(matrix.keys())]).tocsr()
-                # except:
-                #     matrix = np.concatenate([matrix[x].values.reshape(1, -1) for x in list(matrix.keys())], 1)
-
-                # [csr_matrix(matrix.reshape(1, -1), dtype=np.float64)]
-                # new_labels += [label]
-                # data_matrix = data_matrix[1:]
-                # labels = labels[1:]
                 del matrix
                 pbar.update(1)
         list_matrices[j] = matrices
@@ -329,10 +294,8 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
                         x.split('_')[1].lower() in names_to_keep]
         lists["tsv"] = np.array(lists['tsv'])[inds_to_keep].tolist()
         lists["labels"] = np.array(lists['labels'])[inds_to_keep].tolist()
-    concat = MakeTensorsMultiprocess(lists["tsv"], lists["labels"], bins, args_dict)
+    concat = MakeTensorsMultiprocess(lists["tsv"], lists["labels"], bins, dirname, args_dict)
 
-    # pool = multiprocessing.Pool(multiprocessing.cpu_count() - 1)
-    # ctx = get_context("spawn")
     if args_dict.n_cpus < 1:
         n_cpus = multiprocessing.cpu_count() + args_dict.n_cpus
     else:
@@ -566,8 +529,8 @@ if __name__ == "__main__":
         dframe_list = split_sparse(data_matrix.iloc[:, :1000], cols_per_split=int(1e2))
 
     n_cpus = multiprocessing.cpu_count() - 1
-    if n_cpus > len(dframe_list):
-        n_cpus = len(dframe_list)
+    # if n_cpus > len(dframe_list):
+    #     n_cpus = len(dframe_list)
     pool = multiprocessing.Pool(int(n_cpus))
 
     try:
@@ -577,8 +540,12 @@ if __name__ == "__main__":
         exit('Columns and dataframes are not the same length') 
 
     fun = MultiKeepNotFunctionsSparse(keep_only_not_zeros_sparse, data=dframe_list[0], cols=dframe_list[1],
-                                     threshold=0, n_processes=np.ceil(data_matrix.shape[1] / int(1e5)))
+                                     threshold=0, n_processes=np.ceil(data_matrix.shape[1] / int(1e4)))
     data_matrix = pool.map(fun.process, range(len(dframe_list[0])))
+
+    not_zeros_col = np.array([x for x in np.concatenate([x[1] for x in data_matrix])])
+    data_matrix = hstack([x[0] for x in data_matrix if x[0].shape[1] > 0])
+
     data_matrix, not_zeros_col = hstack([x[0] for x in data_matrix if x[0].shape[1] > 0]), np.array(
         [x for x in np.concatenate([x[1] for x in data_matrix])])
     pool.close()
