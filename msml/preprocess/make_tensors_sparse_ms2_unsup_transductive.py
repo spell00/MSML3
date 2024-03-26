@@ -301,7 +301,7 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
     else:
         n_cpus = args_dict.n_cpus
 
-    with multiprocessing.Pool(n_cpus) as pool:
+    with multiprocessing.Pool(n_cpus, maxtasksperchild=10) as pool:
         data_matrix = pool.map(concat.process,
                                range(len(concat.tsv_list))
                                )
@@ -480,12 +480,13 @@ if __name__ == "__main__":
                f"shift{args.shift}/{args.scaler}/log{args.log2}/{args.feature_selection}/"
     dir_inputs = []
     for batch in os.listdir(f"{script_dir}/{args.resources_path}/{args.experiment}"):
-        if 'matrices' == batch or 'mzdb' == batch:
-            continue
-        # if batch in ['01-03-2024', '02-02-2024']:
-        #     continue
-        input_dir = f"{args.resources_path}/{args.experiment}/{batch}/tsv"
-        dir_inputs += [f"{script_dir}/{input_dir}/mz{args.mz_bin}/rt{args.rt_bin}/{args.spd}spd/ms2/all/"]
+        if batch in ['02-02-2024']:
+            if 'matrices' == batch or 'mzdb' == batch:
+                continue
+            # if batch in ['01-03-2024', '02-02-2024']:
+            #     continue
+            input_dir = f"{args.resources_path}/{args.experiment}/{batch}/tsv"
+            dir_inputs += [f"{script_dir}/{input_dir}/mz{args.mz_bin}/rt{args.rt_bin}/{args.spd}spd/ms2/all/"]
 
     bacteria_to_keep = None
 
@@ -531,7 +532,7 @@ if __name__ == "__main__":
     n_cpus = multiprocessing.cpu_count() - 1
     # if n_cpus > len(dframe_list):
     #     n_cpus = len(dframe_list)
-    pool = multiprocessing.Pool(int(n_cpus))
+    pool = multiprocessing.Pool(int(n_cpus), maxtasksperchild=10)
 
     try:
         assert len(dframe_list[0]) == len(dframe_list[1])
@@ -556,7 +557,7 @@ if __name__ == "__main__":
     n_cpus = multiprocessing.cpu_count() - 1
     if n_cpus > len(dframe_list):
         n_cpus = len(dframe_list)
-    pool = multiprocessing.Pool(int(n_cpus))
+    pool = multiprocessing.Pool(int(n_cpus), maxtasksperchild=10)
     fun = MultiKeepNotFunctionsSparse(keep_not_zeros_sparse, data=dframe_list[0], cols=dframe_list[1],
                                        threshold=args.threshold, n_processes=np.ceil(data_matrix.shape[1] / int(1e4)))
     data_matrix = pool.map(fun.process, range(len(dframe_list[0])))

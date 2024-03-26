@@ -32,7 +32,6 @@ def main(path: os.Path, mzBinSize: String = "0.01", rtBinSize: String = "10"): U
 
 def create_dia_histogram(mzDbFile: File, outputFile: File, mzBinSize: Float, rtBinSize: Float) {
 
-
   val printWriter = new PrintWriter(outputFile)
   printWriter.println(List("min_parent_mz","max_parent_mz","rt_bin","mz_bin","bin_intensity").mkString("\t"))
 
@@ -52,10 +51,10 @@ def create_dia_histogram(mzDbFile: File, outputFile: File, mzBinSize: Float, rtB
       for(
         spectrumSlice <- spectrumSlices;
         rt = spectrumSlice.getHeader.getElutionTime;
-        ticByMzIdx = ticByMzAndRtIdx.getOrElseUpdate( (rt / rtBinSize).toInt, new LongMap[Float]() );
+        ticByMzIdx = ticByMzAndRtIdx.getOrElseUpdate( (rt / rtBinSize).toLong, new LongMap[Float]() );
         peak <- spectrumSlice.toPeaks()
       ) {
-        val peakMzIdx = (peak.getMz() / mzBinSize).toInt
+        val peakMzIdx = (peak.getMz() / mzBinSize).toLong
 
         // Update TIC value
         val newTic = ticByMzIdx.get(peakMzIdx).map( _ + peak.getIntensity() ).getOrElse(0f)
