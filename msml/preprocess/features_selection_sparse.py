@@ -205,8 +205,16 @@ def make_lists(dirinput, path, run_name):
         samples.append(sample)
         tmp = sample.split('_')
         batch = tmp[0]
+        manip = tmp[3]
+        label = tmp[2]
+        if label == 'blanc' or label == 'Blanc':
+            concentration = 'NA'
+        else:
+            concentration = tmp[6]
+        urine = tmp[4]
 
-        label = f"{batch}_{'_'.join(tmp[-3:])}".lower()
+        # label = f"{batch}_{'_'.join(tmp[-3:])}".lower()
+        label = f"{label}_{batch}_{manip}_{urine}_{concentration}".lower()
         labels_list.append(label)
 
     categories = [x.split('_')[0] for x in labels_list]

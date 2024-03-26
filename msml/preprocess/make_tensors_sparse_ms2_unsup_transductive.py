@@ -32,7 +32,7 @@ import warnings
 # from batch_effect_removal import remove_batch_effect_all, get_berm
 from features_selection import get_feature_selection_method
 from features_selection_sparse import keep_only_not_zeros_sparse, keep_not_zeros_sparse, \
-    process_sparse_data, count_array, make_lists, split_sparse, MultiKeepNotFunctionsSparse, split_df
+    process_sparse_data, count_array, make_lists, split_sparse, MultiKeepNotFunctionsSparse
 from scipy.signal import find_peaks
 from statsmodels.nonparametric.smoothers_lowess import lowess
 from msalign import msalign
@@ -301,7 +301,7 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
     else:
         n_cpus = args_dict.n_cpus
 
-    with multiprocessing.Pool(n_cpus) as pool:
+    with multiprocessing.Pool(n_cpus, maxtasksperchild=10) as pool:
         data_matrix = pool.map(concat.process,
                                range(len(concat.tsv_list))
                                )
@@ -531,7 +531,7 @@ if __name__ == "__main__":
     n_cpus = multiprocessing.cpu_count() - 1
     # if n_cpus > len(dframe_list):
     #     n_cpus = len(dframe_list)
-    pool = multiprocessing.Pool(int(n_cpus))
+    pool = multiprocessing.Pool(int(n_cpus), maxtasksperchild=10)
 
     try:
         assert len(dframe_list[0]) == len(dframe_list[1])
@@ -556,7 +556,7 @@ if __name__ == "__main__":
     n_cpus = multiprocessing.cpu_count() - 1
     if n_cpus > len(dframe_list):
         n_cpus = len(dframe_list)
-    pool = multiprocessing.Pool(int(n_cpus))
+    pool = multiprocessing.Pool(int(n_cpus), maxtasksperchild=10)
     fun = MultiKeepNotFunctionsSparse(keep_not_zeros_sparse, data=dframe_list[0], cols=dframe_list[1],
                                        threshold=args.threshold, n_processes=np.ceil(data_matrix.shape[1] / int(1e4)))
     data_matrix = pool.map(fun.process, range(len(dframe_list[0])))
