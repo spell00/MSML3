@@ -1,0 +1,44 @@
+FROM ubuntu:20.04
+
+# ADD mzdb2train.sh ./
+ADD msml ./msml/
+# ADD ./mzdb2tsv.sh mzdb2tsv.sh
+ADD ./tsv2df.sh tsv2df.sh
+ADD ./setup.py setup.py
+COPY requirements_tsv2df.txt ./requirements_tsv2df.txt
+# ADD resources ./resources/
+RUN chmod +x msml/preprocess/mzdb2tsv.sh
+RUN chmod +x msml/preprocess/tsv2df.sh
+# RUN chmod +x msml/mzdb2tsv/amm
+RUN chmod +x tsv2df.sh
+
+# Install OpenJDK-8
+RUN apt-get update && \
+    apt-get install -y openjdk-8-jdk && \
+    apt-get install -y ant && \
+    apt-get install -y parallel && \
+    apt-get install -y r-base && \
+    apt-get install -y wget && \
+    apt-get clean;
+
+# Install other dependencies
+# RUN apt-get install -y bc
+
+# Fix certificate issues
+RUN apt-get update && \
+    apt-get install ca-certificates-java && \
+    apt-get clean && \
+    update-ca-certificates -f;
+
+# Setup JAVA_HOME -- useful for docker commandline
+ENV JAVA_HOME /usr/lib/jvm/java-8-openjdk-amd64/
+RUN export JAVA_HOME
+
+RUN apt-get install -y python3-pip python3-dev \
+  && cd /usr/local/bin \
+  && ln -s /usr/bin/python3 python \
+  && pip3 install --upgrade pip 
+RUN python -m pip install -r requirements_tsv2df.txt
+RUN python -m pip install .
+CMD bash ./tsv2df.sh resources/tsv
+

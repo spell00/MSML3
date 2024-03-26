@@ -1,0 +1,38 @@
+# TODO Dockerfile not up to date
+
+FROM ubuntu:20.04
+
+# ADD mzdb2train.sh ./
+ADD msml ./msml/
+#ADD ./mzdb2tsv.sh mzdb2tsv.sh
+RUN chmod +x msml/preprocess/mzdb2tsv.sh
+RUN chmod +x msml/mzdb2tsv/amm
+RUN chmod +x mzdb2tsv.sh
+
+# Install OpenJDK-8
+RUN apt-get update && \
+    apt-get install -y openjdk-8-jdk && \
+    apt-get install -y ant && \
+    apt-get install -y parallel && \
+    # apt-get install -y r-base && \
+    # apt-get install -y wget && \
+    apt-get clean;
+
+# Install other dependencies
+RUN apt-get install -y bc
+
+# Fix certificate issues
+RUN apt-get update && \
+    apt-get install ca-certificates-java && \
+    apt-get clean && \
+    update-ca-certificates -f;
+
+# Setup JAVA_HOME -- useful for docker commandline
+ENV JAVA_HOME /usr/lib/jvm/java-8-openjdk-amd64/
+RUN export JAVA_HOME
+
+RUN apt-get install -y python3-pip python3-dev \
+  && cd /usr/local/bin \
+  && ln -s /usr/bin/python3 python \
+  && pip3 install --upgrade pip 
+CMD bash ./mzdb2tsv.sh resources/mzdb
