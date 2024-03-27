@@ -547,8 +547,6 @@ if __name__ == "__main__":
     not_zeros_col = np.array([x for x in np.concatenate([x[1] for x in data_matrix])])
     data_matrix = hstack([x[0] for x in data_matrix if x[0].shape[1] > 0])
 
-    data_matrix, not_zeros_col = hstack([x[0] for x in data_matrix if x[0].shape[1] > 0]), np.array(
-        [x for x in np.concatenate([x[1] for x in data_matrix])])
     pool.close()
     pool.join()
 
