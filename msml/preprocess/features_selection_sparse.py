@@ -42,7 +42,8 @@ def keep_only_not_zeros_sparse(df, columns, threshold=0):
         columns = []
     df = csc_matrix(df)
 
-    return df, columns
+    # return df, columns
+    return columns
 
 
 def keep_not_zeros(data, threshold=0.3):

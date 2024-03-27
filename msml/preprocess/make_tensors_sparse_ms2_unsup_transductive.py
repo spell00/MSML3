@@ -542,10 +542,11 @@ if __name__ == "__main__":
 
     fun = MultiKeepNotFunctionsSparse(keep_only_not_zeros_sparse, data=dframe_list[0], cols=dframe_list[1],
                                      threshold=0, n_processes=np.ceil(data_matrix.shape[1] / int(1e4)))
-    data_matrix = pool.map(fun.process, range(len(dframe_list[0])))
+    not_zeros_col = pool.map(fun.process, range(len(dframe_list[0])))
 
-    not_zeros_col = np.array([x for x in np.concatenate([x[1] for x in data_matrix])])
-    data_matrix = hstack([x[0] for x in data_matrix if x[0].shape[1] > 0])
+    not_zeros_col = np.array([x for x in np.concatenate([x[1] for x in not_zeros_col])])
+    data_matrix = data_matrix[:, not_zeros_col]
+    # data_matrix = hstack([x[0] for x in data_matrix if x[0].shape[1] > 0])
 
     pool.close()
     pool.join()
