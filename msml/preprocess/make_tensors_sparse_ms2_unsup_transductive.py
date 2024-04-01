@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Based on previous work by Elsa CLAUDE - CHUL of Québec, Canada
-February 2020 - August 2020
-Modified by Simon Pelletier
-June 2021
+Author: Simon Pelletier
 
 """
 
@@ -17,22 +14,22 @@ import time
 # import scipy
 import logging
 import multiprocessing
-from multiprocessing import set_start_method, get_context, Queue, current_process, Process
+from multiprocessing import set_start_method
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 from PIL import Image
 from matplotlib import cm
-from pickle import dump
+from pickle import dump, load
 from scipy.sparse import csr_matrix, vstack, hstack, csc_matrix
 from tqdm import tqdm
 # import nibabel as nib
 import warnings
 # import queue
-# from batch_effect_removal import remove_batch_effect_all, get_berm
 from features_selection import get_feature_selection_method
 from features_selection_sparse import keep_only_not_zeros_sparse, keep_not_zeros_sparse, \
-    process_sparse_data, count_array, make_lists, split_sparse, MultiKeepNotFunctionsSparse
+    process_sparse_data, count_array, make_lists, split_sparse, MultiKeepNotFunctionsSparse, \
+    process_sparse_data_supervised
 from scipy.signal import find_peaks
 from statsmodels.nonparametric.smoothers_lowess import lowess
 from msalign import msalign
@@ -91,10 +88,12 @@ class MakeTensorsMultiprocess:
         print(
             f"Processing file {index}: {file} min_parents: min={tsv.min_parent_mz.min()} max={tsv.min_parent_mz.max()}")
 
+        # if label != 'aba_01-03-2024_240222_u002_l':
+        #     return None, None, None
         tsv = tsv[tsv.bin_intensity != 0]
 
         tsv = tsv.drop(['max_parent_mz'], axis=1)
-        tsv['mz_bin'] = tsv['mz_bin'].round(2)
+        # tsv['mz_bin'] = tsv['mz_bin'].round(2)
 
         min_parents_mz = np.unique(tsv.min_parent_mz)
         interval = min_parents_mz[1] - min_parents_mz[0]
@@ -126,15 +125,15 @@ class MakeTensorsMultiprocess:
                 self.bins['rt_rounding']) - rt_shift,
             index=np.arange(0, tsv.mz_bin.max() + self.bins['mz_bin_post'], self.bins['mz_bin_post']).round(
                 self.bins['mz_rounding']) - mz_shift
-        ).astype(dtype) for min_parent in
+        ) for min_parent in
                  np.arange(int(tsv.min_parent_mz.min()), int(tsv.min_parent_mz.max()) + interval, interval)}
         for i in list(final.keys()):
             final[i].index = np.round(final[i].index, self.bins['mz_rounding'])
             final[i].columns = np.round(final[i].columns, self.bins['rt_rounding'])
         min_parent = list(final.keys())[0]
         rt = float(final[min_parent][list(final[min_parent].keys())[0]][0])
-        spdtypes = final[min_parent].dtypes[rt]
-        prev_rt = -1
+        # spdtypes = final[min_parent].dtypes[rt]
+        # prev_mz = -1
         for i, line in enumerate(tsv.values):
             min_parent, rt, mz, intensity = line
             if np.isnan(rt) or np.isnan(mz) or np.isnan(min_parent):
@@ -146,8 +145,8 @@ class MakeTensorsMultiprocess:
                 else:
                     tmp_rt -= self.bins['rt_bin_post'] / 2
                 rt = tmp_rt
-            else:
-                rt = np.floor(np.round(rt / self.bins['rt_bin_post'], 8)) * self.bins['rt_bin_post']
+            elif self.bins['rt_bin_post'] != self.bins['rt_bin']:
+                rt = np.round(np.round(rt / self.bins['rt_bin_post'], 8), self.bins['rt_bin_post']) * self.bins['rt_bin_post']
 
             if self.bins['mz_shift']:
                 tmp_mz = np.floor(np.round(mz / self.bins['mz_bin_post'], 8)) * self.bins['mz_bin_post']
@@ -156,28 +155,32 @@ class MakeTensorsMultiprocess:
                 else:
                     tmp_mz -= self.bins['mz_bin_post'] / 2
                 mz = tmp_mz
-            else:
-                mz = np.floor(np.round(mz / self.bins['mz_bin_post'], 8)) * self.bins['mz_bin_post']
+            elif self.bins['mz_bin_post'] != self.bins['mz_bin']:
+                mz = np.round(np.round(mz / self.bins['mz_bin_post'], 8), self.bins['mz_bin_post']) * self.bins['mz_bin_post']
             if self.bins['rt_rounding'] != 0:
                 rt = np.round(rt, self.bins['rt_rounding'])
             if self.bins['mz_rounding'] != 0:
                 mz = np.round(mz, self.bins['mz_rounding'])
             # final[min_parent][mz][rt] += np.log1p(intensity)
-            if self.is_sparse and prev_rt != rt:
+            mz = np.round(float(mz), self.bins['mz_rounding'])
+            rt = np.round(float(rt), self.bins['rt_rounding'])
+            # if self.is_sparse and prev_mz != rt:
                 # Change todense on mz rather than rt
-                if prev_rt != -1:
-                    final[min_parent][prev_rt] = final[min_parent][prev_rt].astype(spdtypes)
-                final[min_parent][rt] = final[min_parent][rt].sparse.to_dense()
+                # if prev_mz != -1:
+                #     final[min_parent] = final[min_parent].astype(spdtypes)
+                # final[min_parent] = final[min_parent].sparse.to_dense()
             if self.log2 == 'inloop':
-                final[min_parent][rt][mz] += np.log1p(intensity)
+                final[min_parent].loc[mz].loc[rt] += np.log1p(intensity)
             else:
-                final[min_parent][rt][mz] += intensity
+                final[min_parent].loc[mz].loc[rt] += intensity
             # if self.is_sparse:
             #     final[min_parent][rt] = final[min_parent][rt].astype(spdtypes)
             # del min_parent, rt, mz, intensity, line
-            prev_rt = rt
+            # prev_mz = mz
             if self.test_run and i > 10000:
                 break
+        for min_parent in final:
+            final[min_parent] = final[min_parent].astype(dtype)
         if self.lowess:
             for df in final:
                 for ii, line1 in enumerate(final[df].values):
@@ -392,6 +395,7 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
 
     return matrices, new_labels, [f"{mz_min_parent}_{rt}_{mz}" for mz_min_parent in mz_min_parents for rt in rts for mz
                                    in mzs], {'parents': parents, 'max_rt': max_rt, 'max_mz': max_mz}
+    
 
 
 if __name__ == "__main__":
@@ -410,8 +414,6 @@ if __name__ == "__main__":
     parser.add_argument("--shift", type=int, default=0, help='Shift the data matrix')
     parser.add_argument("--binary", type=int, default=0, help='Blanks vs bacteria')
     parser.add_argument("--threshold", type=float, default=1)
-    # parser.add_argument("--mz_rounding", type=int, default=1)
-    # parser.add_argument("--rt_rounding", type=int, default=1)
     parser.add_argument("--mz_bin_post", type=float, default=0.2)
     parser.add_argument("--rt_bin_post", type=float, default=20)
     parser.add_argument("--mz_bin", type=float, default=0.2)
@@ -433,6 +435,8 @@ if __name__ == "__main__":
     parser.add_argument("--find_peaks", type=int, default=0)
     parser.add_argument("--lowess", type=int, default=0)
     parser.add_argument("--align_peaks", type=int, default=0)
+    parser.add_argument("--make_data", type=int, default=0)
+
     args = parser.parse_args()
     args.combat_corr = 0  # TODO to remove
 
@@ -440,14 +444,17 @@ if __name__ == "__main__":
         args.mz_bin = int(float(args.mz_bin))
     else:
         args.mz_bin = float(args.mz_bin)
+
     if float(args.rt_bin) >= 1:
         args.rt_bin = int(float(args.rt_bin))
     else:
         args.rt_bin = float(args.rt_bin)
+
     if float(args.mz_bin_post) >= 1:
         args.mz_bin_post = int(float(args.mz_bin_post))
     else:
         args.mz_bin_post = float(args.mz_bin_post)
+
     if float(args.rt_bin_post) >= 1:
         args.rt_bin_post = int(float(args.rt_bin_post))
     else:
@@ -463,9 +470,14 @@ if __name__ == "__main__":
     else:
         args.rt_rounding = 1
 
+    if args.test_run:
+        args.run_name = 'test'
+
     bins = {
         'mz_bin_post': args.mz_bin_post,
         'rt_bin_post': args.rt_bin_post,
+        'mz_bin': args.mz_bin,
+        'rt_bin': args.rt_bin,
         'mz_rounding': args.mz_rounding,
         'rt_rounding': args.rt_rounding,
         'mz_shift': args.shift,
@@ -480,59 +492,67 @@ if __name__ == "__main__":
                f"shift{args.shift}/{args.scaler}/log{args.log2}/{args.feature_selection}/"
     dir_inputs = []
     for batch in os.listdir(f"{script_dir}/{args.resources_path}/{args.experiment}"):
-        if batch in ['02-02-2024']:
-            if 'matrices' == batch or 'mzdb' == batch:
-                continue
-            # if batch in ['01-03-2024', '02-02-2024']:
-            #     continue
-            input_dir = f"{args.resources_path}/{args.experiment}/{batch}/tsv"
-            dir_inputs += [f"{script_dir}/{input_dir}/mz{args.mz_bin}/rt{args.rt_bin}/{args.spd}spd/ms2/all/"]
+        if batch != '26-02-2024':
+            continue
+        if 'matrices' == batch or 'mzdb' == batch or 'time.txt' == batch:
+            continue
+        input_dir = f"{args.resources_path}/{args.experiment}/{batch}/tsv"
+        dir_inputs += [f"{script_dir}/{input_dir}/mz{args.mz_bin}/rt{args.rt_bin}/{args.spd}spd/ms2/all/"]
 
+    matrix_filename = f'{dir_name}/{args.run_name}/data_matrix_tmp.pkl'
+    columns_filename = f'{dir_name}/{args.run_name}/columns.pkl'
+    labels_filename = f'{dir_name}/{args.run_name}/labels.pkl'
     bacteria_to_keep = None
 
     if len(args.run_name.split(',')) > 1:
         bacteria_to_keep = args.run_name.split(',')
     else:
         bacteria_to_keep = None
-    data_matrices, labels, max_mzs, max_rts, parents = [], [], [], [], []
-    for dir_input in dir_inputs:
-        tmp = make_df(dir_input, dir_name, bins=bins, args_dict=args, names_to_keep=bacteria_to_keep)
-        data_matrices += [tmp[0]]
-        labels += [tmp[1]]
-        max_mzs += [tmp[3]['max_mz']]
-        max_rts += [tmp[3]['max_rt']]
-        parents += [tmp[3]['parents']]
+    if args.make_data or not os.path.exists(f'{dir_name}/{args.run_name}'):
 
-    labels = np.concatenate(labels)
-    parents = np.unique(np.concatenate(parents))
-    max_features = {'parents': len(parents), 'max_rt': max(max_rts), 'max_mz': max(max_mzs)}
-    rts = [np.round(rt * args.rt_bin_post, args.rt_rounding) for rt in range(max_features['max_rt'])]
-    mzs = [np.round(mz * args.mz_bin_post, args.mz_rounding) for mz in range(max_features['max_mz'])]
-    # mz_min_parents = np.arange(min(min_mz_parents), max(min_mz_parents) + 1, 1)
-    columns = [f"{mz_min_parent}_{rt}_{mz}" for mz_min_parent in parents for rt in rts for mz in mzs]
+        data_matrices, labels, max_mzs, max_rts, parents = [], [], [], [], []
+        for dir_input in dir_inputs:
+            tmp = make_df(dir_input, dir_name, bins=bins, args_dict=args, names_to_keep=bacteria_to_keep)
+            data_matrices += [tmp[0]]
+            labels += [tmp[1]]
+            max_mzs += [tmp[3]['max_mz']]
+            max_rts += [tmp[3]['max_rt']]
+            parents += [tmp[3]['parents']]
 
-    data_matrices = adjust_tensors(data_matrices, max_features, args)
-    data_matrix = vstack([vstack(data_matrices[k]) for k in range(len(data_matrices))])
-    if args.test_run:
-        args.run_name = 'test'
-    print('\nComplete data shape', data_matrix.shape)
+        labels = np.concatenate(labels)
+        parents = np.unique(np.concatenate(parents))
+        max_features = {'parents': len(parents), 'max_rt': max(max_rts), 'max_mz': max(max_mzs)}
+        rts = [np.round(rt * args.rt_bin_post, args.rt_rounding) for rt in range(max_features['max_rt'])]
+        mzs = [np.round(mz * args.mz_bin_post, args.mz_rounding) for mz in range(max_features['max_mz'])]
+        # mz_min_parents = np.arange(min(min_mz_parents), max(min_mz_parents) + 1, 1)
+        columns = [f"{mz_min_parent}_{rt}_{mz}" for mz_min_parent in parents for rt in rts for mz in mzs]
 
-    # Removes all the columns that are only zeros. Runs in parallel (only with 10% of the cpus)
-    print("Finding not zeros columns...")
-    if args.align_peaks:
-        print("Aligning the data...")
-        peaks_list = pd.read_csv(f"{dir_name}/{args.run_name}/variance_scores.csv", index_col=0)
-        data_matrix = msalign(data_matrix.columns, data_matrix.values)
-    if not args.test_run:
-        # DataFrame is split into smaller dataframes to enable parallel processing
-        dframe_list = split_sparse(data_matrix, cols_per_split=int(1e5), columns=columns)
+        data_matrices = adjust_tensors(data_matrices, max_features, args)
+        data_matrix = vstack([vstack(data_matrices[k]) for k in range(len(data_matrices))])
+        print('\nComplete data shape', data_matrix.shape)
+
+        # Save the data matrix
+        # Removes all the columns that are only zeros. Runs in parallel (only with 10% of the cpus)
+        if args.align_peaks:
+            print("Aligning the data...")
+            peaks_list = pd.read_csv(f"{dir_name}/{args.run_name}/variance_scores.csv", index_col=0)
+            data_matrix = msalign(data_matrix.columns, data_matrix.values)
+        os.makedirs(f'{dir_name}/{args.run_name}', exist_ok=True)
+        dump(data_matrix, open(matrix_filename, 'wb'))
+        dump(columns, open(columns_filename, 'wb'))
+        dump(labels, open(labels_filename, 'wb'))
     else:
-        dframe_list = split_sparse(data_matrix.iloc[:, :1000], cols_per_split=int(1e2))
+        data_matrix = load(open(matrix_filename, 'rb'))
+        columns = load(open(columns_filename, 'rb'))
+        labels = load(open(labels_filename, 'rb'))
+    print("Finding not zeros only columns...")
+
+    # TODO only pass and return a list of list of columns. data_matrix could be seperated without taking more space
+    # TODO now the space doubles here
+    dframe_list = split_sparse(data_matrix, cols_per_split=int(1e5), columns=columns)
 
     n_cpus = multiprocessing.cpu_count() - 1
-    # if n_cpus > len(dframe_list):
-    #     n_cpus = len(dframe_list)
-    pool = multiprocessing.Pool(int(n_cpus), maxtasksperchild=10)
+    pool = multiprocessing.Pool(int(n_cpus), maxtasksperchild=1)
 
     try:
         assert len(dframe_list[0]) == len(dframe_list[1])
@@ -540,32 +560,35 @@ if __name__ == "__main__":
         print(len(dframe_list[0]), len(dframe_list[1]))
         exit('Columns and dataframes are not the same length') 
 
-    fun = MultiKeepNotFunctionsSparse(keep_only_not_zeros_sparse, data=dframe_list[0], cols=dframe_list[1],
-                                     threshold=0, n_processes=np.ceil(data_matrix.shape[1] / int(1e4)))
-    not_zeros_col = pool.map(fun.process, range(len(dframe_list[0])))
+    fun = MultiKeepNotFunctionsSparse(keep_only_not_zeros_sparse, data=dframe_list[0], cols=dframe_list[1], nums=dframe_list[2],
+                                      threshold=0, n_processes=np.ceil(data_matrix.shape[1] / int(1e5)))
+    notzeros = pool.map(fun.process, range(len(dframe_list[0])))
 
-    not_zeros_col = np.array([x for x in np.concatenate([x[1] for x in not_zeros_col])])
+    new_columns = np.array([x for x in np.concatenate([x[0] for x in notzeros])])
+    not_zeros_col = np.array([x for x in np.concatenate([x[1] for x in notzeros])])
+    # not_zeros_col = np.array([x for x in np.concatenate([x[1] for x in notzeros])])
     data_matrix = data_matrix[:, not_zeros_col]
-    # data_matrix = hstack([x[0] for x in data_matrix if x[0].shape[1] > 0])
 
     pool.close()
     pool.join()
 
     print("Finding not zeros columns...")
-    dframe_list = split_sparse(data_matrix, cols_per_split=int(1e4), columns=not_zeros_col)
+    dframe_list = split_sparse(data_matrix, cols_per_split=int(1e4), columns=new_columns)
     n_cpus = multiprocessing.cpu_count() - 1
-    if n_cpus > len(dframe_list):
-        n_cpus = len(dframe_list)
-    pool = multiprocessing.Pool(int(n_cpus), maxtasksperchild=10)
-    fun = MultiKeepNotFunctionsSparse(keep_not_zeros_sparse, data=dframe_list[0], cols=dframe_list[1],
+    # if n_cpus > len(dframe_list):
+    #     n_cpus = len(dframe_list)
+    pool = multiprocessing.Pool(int(n_cpus), maxtasksperchild=1)
+    fun = MultiKeepNotFunctionsSparse(keep_not_zeros_sparse, data=dframe_list[0], cols=dframe_list[1], nums=dframe_list[2],
                                        threshold=args.threshold, n_processes=np.ceil(data_matrix.shape[1] / int(1e4)))
-    data_matrix = pool.map(fun.process, range(len(dframe_list[0])))
-    data_matrix, not_zeros_col = hstack([x[0] for x in data_matrix if x[0].shape[1] > 0]), np.array(
-        [x for x in np.concatenate([x[1] for x in data_matrix])])
+    notzeros = pool.map(fun.process, range(len(dframe_list[0])))
+    new_columns = np.array([x for x in np.concatenate([x[0] for x in notzeros])])
+    not_zeros_col = np.array([x for x in np.concatenate([x[1] for x in notzeros])])
+    data_matrix = data_matrix[:, not_zeros_col]
+
     pool.close()
     pool.join()
 
-    columns = not_zeros_col
+    columns = new_columns
     if args.log2 == 'after':
         print("Logging the data...")
         data_matrix = np.log1p(data_matrix)  # .astype(np.float32)
@@ -637,8 +660,12 @@ if __name__ == "__main__":
     fs = get_feature_selection_method(args.feature_selection)
 
     print(f"Calculating {args.feature_selection}\n")
-    process_sparse_data(data, cats, columns, model=fs, dirname=dir_name, k=int(args.k), 
-                 feature_selection=args.feature_selection, run_name=args.run_name)
+    if args.feature_selection == 'variance':
+        process_sparse_data(data, cats, columns, model=fs, dirname=dir_name, k=int(args.k), 
+                    feature_selection=args.feature_selection, run_name=args.run_name)
+    else:
+        process_sparse_data_supervised(data, cats, columns, model=fs, dirname=dir_name, k=int(args.k), 
+                    feature_selection=args.feature_selection, run_name=args.run_name)
 
     args.mutual_info_path = f'{dir_name}/{args.run_name}/{args.feature_selection}_scores.csv'
     if args.k > -1:

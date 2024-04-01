@@ -257,23 +257,6 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None, features=Non
     else:
         n_cpus = args_dict.n_cpus
 
-    """
-    with ctx.Pool(n_cpus) as pool:
-        funclist = []
-
-        for i in range(len(concat.tsv_list)):
-            f = pool.apply_async(concat.process, [i])
-            funclist.append(f)
-
-        # -----------------------
-        data_matrix = []
-        for f in funclist:
-            data_matrix = f.get(timeout=120)
-            data_matrix.append(data_matrix)
-        pool.close()
-        pool.terminate()
-    """
-
     with multiprocessing.Pool(n_cpus) as pool:
         data_matrix = pool.map(concat.process,
                                range(len(concat.tsv_list))
@@ -285,29 +268,6 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None, features=Non
         pool.terminate()
         pool.join()
 
-    """
-    number_of_task = len(concat.tsv_list)
-    tasks_to_accomplish = Queue()
-    tasks_that_are_done = Queue()
-    processes = []
-
-    for i in range(number_of_task):
-        tasks_to_accomplish.put(i)
-
-    # creating processes
-    for w in range(n_cpus):
-        p = Process(target=do_job, args=(tasks_to_accomplish, tasks_that_are_done, concat))
-        processes.append(p)
-        p.start()
-
-    # completing process
-    for p in processes:
-        p.join()
-
-    # print the output
-    while not tasks_that_are_done.empty():
-        print(tasks_that_are_done.get())
-    """
     print('Tensors are done!')
 
     labels = [x[2].lower() for x in data_matrix]
