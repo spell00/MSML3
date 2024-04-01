@@ -11,11 +11,20 @@ library(SummarizedExperiment)
 ## Get the full path to the CDF files
 # cdfs <- dir(system.file("mzml", package = "faahKO"), full.names = TRUE,
 #             recursive = TRUE)[c(1, 2, 5, 6, 7, 8, 11, 12)]
-mzmls <- dir('resources/bacteries_2024/01-03-2024/mzml', full.names = TRUE, recursive = TRUE)
-# keep only the first 4 mzmls
-# mzmls <- mzmls[1:4]
+# Get all directory names in the current directory, except matrices
+all_dirs <- list.dirs('resources/bacteries_2024', full.names = FALSE, recursive = FALSE)
+# Filter out the directory you want to exclude
+all_dirs <- all_dirs[!all_dirs %in% "matrices"]
 
-# spluits mzmls on / and keep last. 
+# Create empty list to store mzmls
+mzmls <- list()
+for (var in all_dirs) {
+    print(var)
+    mzmls <- do.call(c, list(mzmls, dir(paste0('resources/bacteries_2024/',var,'/mzml'), full.names = TRUE, recursive = TRUE)))
+}
+mzmls <- unlist(mzmls)
+
+# splits mzmls on / and keep last. 
 mzmls_names <- sapply(strsplit(mzmls, "/"), function(x) x[length(x)])
 # split mzmls names and keep second item
 mzmls_names <- sapply(strsplit(mzmls_names, "_"), function(x) x[2])
@@ -81,4 +90,4 @@ res <- quantify(faahko, value = "into", method = "sum")
 matrix <- assay(res)
 
 # save the matrix
-write.csv(matrix, "resources/bacteries_2024/01-03-2024/matrix.csv")
+write.csv(matrix, "resources/bacteries_2024/matrix.csv")
