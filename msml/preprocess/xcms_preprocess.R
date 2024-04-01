@@ -11,14 +11,21 @@ library(SummarizedExperiment)
 ## Get the full path to the CDF files
 # cdfs <- dir(system.file("mzml", package = "faahKO"), full.names = TRUE,
 #             recursive = TRUE)[c(1, 2, 5, 6, 7, 8, 11, 12)]
-mzmls <- dir('resources/bacteries_2024/01-03-2024/mzml', full.names = TRUE, recursive = TRUE)
+
+mzmls <- dir('resources/bacteries_2024', full.names = TRUE, recursive = TRUE, pattern = ".mzML")
 # keep only the first 4 mzmls
 # mzmls <- mzmls[1:4]
 
-# spluits mzmls on / and keep last. 
 mzmls_names <- sapply(strsplit(mzmls, "/"), function(x) x[length(x)])
+
+# Get batch names
+batches <- sapply(strsplit(mzmls, "/"), function(x) x[length(x)-1])
 # split mzmls names and keep second item
 mzmls_names <- sapply(strsplit(mzmls_names, "_"), function(x) x[2])
+
+# Concat batch and mzmls names
+mzmls_names <- paste(batches, mzmls_names, sep = "_")
+
 ## Create a phenodata data.frame
 pd <- data.frame(sample_name = sub(basename(mzmls), pattern = ".mzml",
                                    replacement = "", fixed = TRUE),
@@ -81,4 +88,4 @@ res <- quantify(faahko, value = "into", method = "sum")
 matrix <- assay(res)
 
 # save the matrix
-write.csv(matrix, "resources/bacteries_2024/01-03-2024/matrix.csv")
+write.csv(matrix, "resources/bacteries_2024/matrix.csv")

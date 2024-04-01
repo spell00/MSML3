@@ -27,23 +27,33 @@ def keep_only_not_zeros(df, threshold=0):
     return df
 
 
-def keep_only_not_zeros_sparse(df, columns, threshold=0):
+def keep_only_not_zeros_sparse(df, columns, nums, threshold=0):
     df = df.toarray()
     not_zeros_cols = (df != 0).any(axis=0)
     if sum(not_zeros_cols) > 0:
         cols = [i for i, c in enumerate(not_zeros_cols) if c]
         try:
             columns = [columns[c] for c in cols]
+            nums = [nums[c] for c in cols]
         except:
             columns = []
-        df = df[:, cols]
+            nums = []
+        # df = df[:, cols]
     else:
-        df = np.empty(shape=[df.shape[0], 0])
+        # df = np.empty(shape=[df.shape[0], 0])
+        cols = []
         columns = []
-    df = csc_matrix(df)
+        nums = []
+    # df = csc_matrix(df)
+    del df
+
+    try:
+        assert len(columns) == len(nums)
+    except AssertionError as err:
+        print(err, "\nOops! The list of columns and nums don't have the same length.")
 
     # return df, columns
-    return columns
+    return columns, nums
 
 
 def keep_not_zeros(data, threshold=0.3):
@@ -62,7 +72,7 @@ def keep_not_zeros(data, threshold=0.3):
     return data
 
 
-def keep_not_zeros_sparse(data, columns, threshold=0.3):
+def keep_not_zeros_sparse(data, columns, nums, threshold=0.3):
     """
     Removes columns that are all zeros
     :param data:
@@ -74,13 +84,22 @@ def keep_not_zeros_sparse(data, columns, threshold=0.3):
     )
     # print("Removing zeros...")
     if len(not_zeros_cols) > 0:
-        data = data[:, not_zeros_cols]
-        columns = [columns[c] for c in not_zeros_cols]
+        # data = data[:, not_zeros_cols]
+        print(data.shape, len(not_zeros_cols), len(columns), len(nums))
+        try:
+            columns = [columns[c] for c in not_zeros_cols]
+            nums = [nums[c] for c in not_zeros_cols]
+        except:
+            print('PROBLEM:', data.shape, len(not_zeros_cols), len(columns), len(nums))
+            columns = []
+            nums = []
     else:
-        data = np.empty(shape=[data.shape[0], 0])
+        # data = np.empty(shape=[data.shape[0], 0])
         columns = []
-    data = csc_matrix(data)
-    return data, columns
+        nums = []
+    # data = csc_matrix(data)
+    del data
+    return columns, nums
 
 
 def keep_not_duplicated(data, threshold=0.95):
@@ -108,6 +127,55 @@ def keep_not_duplicated(data, threshold=0.95):
 def process_sparse_data(data, cats, columns, model, dirname, feature_selection, k=10000, run_name=''):
     if k == -1:
         k = data.shape[1]
+    datasum = data.sum(0)
+    inds_zeros = [i for i in range(datasum.shape[1]) if datasum[0, i] == 0]
+
+    print(f"Out of {data.shape[1]} features, {len(inds_zeros)} columns are only zeros")
+
+    not_zeros_cols = []
+    not_zeros_cols.extend([i for i in range(datasum.shape[1]) if datasum[0, i] > 0])
+    data = data[:, not_zeros_cols]
+    columns = [columns[c] for c in not_zeros_cols]
+
+    # data['pool'] = data['pool'][data['pool'].columns[not_zeros_cols]]
+    # if data['test'] is not None:
+    #     data['test'] = data['test'][data['test'].columns[not_zeros_cols]]
+
+    # assert all columns with only 0s are removed
+    assert len([i for i in range(datasum.shape[1]) if datasum[0, i] == 0]) == 0
+    # data.to_csv('train_df.csv')
+    dframe_list = split_sparse(data, columns, cols_per_split=int(1e3))
+
+    process = Process(model, dframe_list[0], cats, dframe_list[1], np.ceil(data.shape[1] / int(1e3)))
+
+    # TODO This was probably because an error occured with too many processes. Check if it's still necessary
+    pool = multiprocessing.Pool(int(multiprocessing.cpu_count() / 10))
+
+    mi = pd.concat(
+        pool.map(process.process,
+                 range(len(dframe_list[0]))
+                 )
+    )
+
+    top_indices = np.argsort(mi.values.reshape(-1))[::-1]
+    top_scores = np.sort(mi.values.reshape(-1))[::-1]
+    top_k_indices = top_indices[:k].reshape(-1)
+    top_k_scores = top_scores[:k].reshape(-1)
+    # top_columns = data.columns[top_indices]
+    top_k_columns = np.array(columns)[top_k_indices]
+
+    features_scores = pd.DataFrame(top_k_scores.reshape([-1, 1]),
+                                   columns=['score'],
+                                   index=top_k_columns)
+    os.makedirs(f'{dirname}/{run_name}/', exist_ok=True)
+    features_scores.to_csv(
+        f'{dirname}/{run_name}/{feature_selection}_scores.csv',
+        index_label='minp_maxp_rt_mz')
+
+
+def process_sparse_data_supervised(data, cats, columns, model, dirname, feature_selection, k=10000, run_name=''):
+    if k == -1:
+        k = 1e4
     datasum = data.sum(0)
     inds_zeros = [i for i in range(datasum.shape[1]) if datasum[0, i] == 0]
 
@@ -198,6 +266,8 @@ def make_lists(dirinput, path, run_name):
     #     tsv_list.remove(psample)
     labels_list = []
     for _, file in enumerate(tsv_list):
+        if 'hela' in file:
+            continue
         if len(file.split('\\')) > 1:
             sample = file.split('\\')[-1].split('.')[0]
         else:
@@ -264,12 +334,16 @@ def split_sparse(dframe, columns, cols_per_split):
         if x < n_partitions - 1 else columns[x * cols_per_split:]
         for x in range(n_partitions)
     ]
+    col_nums_list = [np.arange(x * cols_per_split, (x + 1) * cols_per_split)
+        if x < n_partitions - 1 else np.arange(x * cols_per_split, dframe.shape[1])
+        for x in range(n_partitions)
+    ]
     try:
         assert np.sum(
             [df1.shape[1] for df1 in dframes_list]) == dframe.shape[1]
     except AssertionError as err:
         print(err, "\nOops! The list of dataframes don't have the same shape as inial dataframe.")
-    return dframes_list, cols_list
+    return dframes_list, cols_list, col_nums_list
 
 
 def make_matrix(finals, labels):
@@ -307,7 +381,7 @@ class MultiKeepNotFunctionsSparse:
     Class for multiprocessing of keep_not_zeros and keep_not_duplicated
     """
 
-    def __init__(self, function, data, cols, threshold, n_processes):
+    def __init__(self, function, data, cols, nums, threshold, n_processes):
         """
         :param function:
         :param data:
@@ -317,6 +391,7 @@ class MultiKeepNotFunctionsSparse:
         self.function = function
         self.data = data
         self.cols = cols
+        self.nums = nums
         self.threshold = threshold
         self.n_processes = n_processes
 
@@ -325,7 +400,9 @@ class MultiKeepNotFunctionsSparse:
         Process function
         """
         print(f"Process: {i}/{self.n_processes}")
-        return self.function(self.data[i], self.cols[i], threshold=self.threshold)
+        results = self.function(self.data[i], self.cols[i], self.nums[i], threshold=self.threshold)
+        self.data[i] = []
+        return results
 
 
 class MultiKeepNotFunctions:
