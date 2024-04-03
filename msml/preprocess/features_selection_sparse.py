@@ -176,6 +176,7 @@ def process_sparse_data(data, cats, columns, model, dirname, feature_selection, 
 
 
 def process_sparse_data_supervised(data, cats, columns, model, dirname, feature_selection, k=10000, run_name='', n_splits=5, groupkfold=1):
+    # TODO POOLS HANDLING
     if k == -1:
         k = data.shape[1]
     datasum = data.sum(0)
@@ -195,6 +196,20 @@ def process_sparse_data_supervised(data, cats, columns, model, dirname, feature_
     # assert all columns with only 0s are removed
     assert len([i for i in range(datasum.shape[1]) if datasum[0, i] == 0]) == 0
     # data.to_csv('train_df.csv')
+    features_scores = [None for _ in range(n_splits)]
+    if groupkfold:
+        skf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
+        train_nums = np.arange(0, len(data['labels']['train']))
+        # Remove samples from unwanted batches
+        splitter = skf.split(train_nums, data['labels']['train'], data['batches']['train'])
+        skf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
+        train_nums_pool = np.arange(0, len(data['labels']['train_pool']))
+    else:
+        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        train_nums = np.arange(0, len(data['labels']['train']))
+        splitter = skf.split(train_nums, data['labels']['train']).__next__()
+        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        train_nums_pool = np.arange(0, len(data['labels']['train_pool']))
 
     for i in range(n_splits):
         dframe_list = split_sparse(data, columns, cols_per_split=int(1e3))
@@ -217,14 +232,16 @@ def process_sparse_data_supervised(data, cats, columns, model, dirname, feature_
         # top_columns = data.columns[top_indices]
         top_k_columns = np.array(columns)[top_k_indices]
 
-        features_scores = pd.DataFrame(top_k_scores.reshape([-1, 1]),
+        features_scores[i] = pd.DataFrame(top_k_scores.reshape([-1, 1]),
                                     columns=['score'],
                                     index=top_k_columns)
         os.makedirs(f'{dirname}/{run_name}/', exist_ok=True)
-        features_scores.to_csv(
-            f'{dirname}/{run_name}/{feature_selection}_scores.csv',
+        features_scores[i].to_csv(
+            f'{dirname}/{run_name}/{feature_selection}_scores_{i}.csv',
             index_label='minp_maxp_rt_mz')
 
+    # TODO save a version of the features scores averaged over all splits and ordered by best scores
+    
 
 def count_array(arr):
     """
