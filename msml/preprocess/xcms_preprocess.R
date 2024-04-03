@@ -11,7 +11,6 @@ library(SummarizedExperiment)
 ## Get the full path to the CDF files
 # cdfs <- dir(system.file("mzml", package = "faahKO"), full.names = TRUE,
 #             recursive = TRUE)[c(1, 2, 5, 6, 7, 8, 11, 12)]
-<<<<<<< HEAD
 # Get all directory names in the current directory, except matrices
 all_dirs <- list.dirs('resources/bacteries_2024', full.names = FALSE, recursive = FALSE)
 # Filter out the directory you want to exclude
@@ -26,13 +25,6 @@ for (var in all_dirs) {
 mzmls <- unlist(mzmls)
 
 # splits mzmls on / and keep last. 
-=======
-
-mzmls <- dir('resources/bacteries_2024', full.names = TRUE, recursive = TRUE, pattern = ".mzML")
-# keep only the first 4 mzmls
-# mzmls <- mzmls[1:4]
-
->>>>>>> bf9d736f373bce6e233daaace32afccbc95cc63d
 mzmls_names <- sapply(strsplit(mzmls, "/"), function(x) x[length(x)])
 
 # Get batch names

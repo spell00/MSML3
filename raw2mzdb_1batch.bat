@@ -3,8 +3,8 @@ set spd=%1%
 set experiment=%2%
 set path=%3%
 IF [%1%]==[] (set spd=200)
-IF [%2%]==[] (set experiment=13-03-2024)
-IF [%3%]==[] (set path=resources\bacteries_2024)
+IF [%2%]==[] (set experiment=20220825_BGU)
+IF [%3%]==[] (set path=resources\bacteries_2022)
 
 setlocal enableDelayedExpansion
 

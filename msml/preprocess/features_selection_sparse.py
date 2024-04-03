@@ -5,6 +5,8 @@ import os
 import numpy as np
 import pandas as pd
 from sklearn.feature_selection import mutual_info_classif, f_classif, VarianceThreshold
+from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold
+
 from scipy.sparse import csc_matrix
 
 def get_feature_selection_method(model_name):
@@ -173,9 +175,9 @@ def process_sparse_data(data, cats, columns, model, dirname, feature_selection, 
         index_label='minp_maxp_rt_mz')
 
 
-def process_sparse_data_supervised(data, cats, columns, model, dirname, feature_selection, k=10000, run_name=''):
+def process_sparse_data_supervised(data, cats, columns, model, dirname, feature_selection, k=10000, run_name='', n_splits=5, groupkfold=1):
     if k == -1:
-        k = 1e4
+        k = data.shape[1]
     datasum = data.sum(0)
     inds_zeros = [i for i in range(datasum.shape[1]) if datasum[0, i] == 0]
 
@@ -193,33 +195,35 @@ def process_sparse_data_supervised(data, cats, columns, model, dirname, feature_
     # assert all columns with only 0s are removed
     assert len([i for i in range(datasum.shape[1]) if datasum[0, i] == 0]) == 0
     # data.to_csv('train_df.csv')
-    dframe_list = split_sparse(data, columns, cols_per_split=int(1e3))
 
-    process = Process(model, dframe_list[0], cats, dframe_list[1], np.ceil(data.shape[1] / int(1e3)))
+    for i in range(n_splits):
+        dframe_list = split_sparse(data, columns, cols_per_split=int(1e3))
 
-    # TODO This was probably because an error occured with too many processes. Check if it's still necessary
-    pool = multiprocessing.Pool(int(multiprocessing.cpu_count() / 10))
+        process = Process(model, dframe_list[0], cats, dframe_list[1], np.ceil(data.shape[1] / int(1e3)))
 
-    mi = pd.concat(
-        pool.map(process.process,
-                 range(len(dframe_list[0]))
-                 )
-    )
+        # TODO This was probably because an error occured with too many processes. Check if it's still necessary
+        pool = multiprocessing.Pool(int(multiprocessing.cpu_count() / 10))
 
-    top_indices = np.argsort(mi.values.reshape(-1))[::-1]
-    top_scores = np.sort(mi.values.reshape(-1))[::-1]
-    top_k_indices = top_indices[:k].reshape(-1)
-    top_k_scores = top_scores[:k].reshape(-1)
-    # top_columns = data.columns[top_indices]
-    top_k_columns = np.array(columns)[top_k_indices]
+        mi = pd.concat(
+            pool.map(process.process,
+                    range(len(dframe_list[0]))
+                    )
+        )
 
-    features_scores = pd.DataFrame(top_k_scores.reshape([-1, 1]),
-                                   columns=['score'],
-                                   index=top_k_columns)
-    os.makedirs(f'{dirname}/{run_name}/', exist_ok=True)
-    features_scores.to_csv(
-        f'{dirname}/{run_name}/{feature_selection}_scores.csv',
-        index_label='minp_maxp_rt_mz')
+        top_indices = np.argsort(mi.values.reshape(-1))[::-1]
+        top_scores = np.sort(mi.values.reshape(-1))[::-1]
+        top_k_indices = top_indices[:k].reshape(-1)
+        top_k_scores = top_scores[:k].reshape(-1)
+        # top_columns = data.columns[top_indices]
+        top_k_columns = np.array(columns)[top_k_indices]
+
+        features_scores = pd.DataFrame(top_k_scores.reshape([-1, 1]),
+                                    columns=['score'],
+                                    index=top_k_columns)
+        os.makedirs(f'{dirname}/{run_name}/', exist_ok=True)
+        features_scores.to_csv(
+            f'{dirname}/{run_name}/{feature_selection}_scores.csv',
+            index_label='minp_maxp_rt_mz')
 
 
 def count_array(arr):
@@ -278,7 +282,7 @@ def make_lists(dirinput, path, run_name):
         batch = tmp[0]
         manip = tmp[3]
         label = tmp[2]
-        if label == 'blanc' or label == 'Blanc':
+        if label in ['blanc', 'Blanc', 'blk', 'Blk'] or label == 'Blanc':
             concentration = 'NA'
         else:
             concentration = tmp[6]
@@ -448,19 +452,22 @@ class Process:
         self.labels = labels
         self.columns = columns
         self.n_processes = n_processes
+        self.unique_labels = np.unique(labels)
+        self.cats = np.array([np.argwhere(self.unique_labels == label)[0][0] for label in labels])
 
     def process(self, i):
         """
         Process function
         """
-        print(f"Process: {i}/{self.n_processes}")
-        results = self.model(self.data[i])
+        print(f"Process: {i}/{self.n_processes}", self.model)
+        # results = self.model(self.data[i])
+        data = self.data[i].toarray()
         if self.model == VarianceThreshold:
             model = self.model(threshold=0)
-            _ = model.fit_transform(self.data[i])
+            _ = model.fit_transform(data[i])
             results = model.variances_
         else:
-            results = self.model(self.data[i], self.labels)
+            results = self.model(data, self.labels)
             if self.model != mutual_info_classif:
                 results = results[0]
         return pd.DataFrame(

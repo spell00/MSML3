@@ -492,7 +492,7 @@ if __name__ == "__main__":
                f"shift{args.shift}/{args.scaler}/log{args.log2}/{args.feature_selection}/"
     dir_inputs = []
     for batch in os.listdir(f"{script_dir}/{args.resources_path}/{args.experiment}"):
-        if batch != '26-02-2024':
+        if batch not in ['01-03-2024']:
             continue
         if 'matrices' == batch or 'mzdb' == batch or 'time.txt' == batch:
             continue
@@ -665,7 +665,7 @@ if __name__ == "__main__":
                     feature_selection=args.feature_selection, run_name=args.run_name)
     else:
         process_sparse_data_supervised(data, cats, columns, model=fs, dirname=dir_name, k=int(args.k), 
-                    feature_selection=args.feature_selection, run_name=args.run_name)
+                    feature_selection=args.feature_selection, run_name=args.run_name, n_splits=5)
 
     args.mutual_info_path = f'{dir_name}/{args.run_name}/{args.feature_selection}_scores.csv'
     if args.k > -1:
