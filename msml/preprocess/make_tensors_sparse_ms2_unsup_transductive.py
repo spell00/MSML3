@@ -172,7 +172,10 @@ class MakeTensorsMultiprocess:
             if self.log2 == 'inloop':
                 final[min_parent].loc[mz].loc[rt] += np.log1p(intensity)
             else:
-                final[min_parent].loc[mz].loc[rt] += intensity
+                try:
+                    final[min_parent].loc[mz].loc[rt] += intensity
+                except:
+                    pass
             # if self.is_sparse:
             #     final[min_parent][rt] = final[min_parent][rt].astype(spdtypes)
             # del min_parent, rt, mz, intensity, line
@@ -235,6 +238,7 @@ def delete_rows_csr(mat, indices):
     mask = np.ones(mat.shape[0], dtype=bool)
     mask[indices] = False
     return mat[mask]
+
 
 def adjust_tensors(list_matrices, max_features, args_dict):
     # TODO VERIFY THAT THE ADJUSTMENTS ARE CORRECT; everything is appended to the high end of the tensor, is it correct?
@@ -427,7 +431,7 @@ if __name__ == "__main__":
     parser.add_argument("--experiment", type=str, default='new_old_data')
     parser.add_argument("--resources_path", type=str, default='../../../resources',
                         help="Path to input directory")
-    parser.add_argument("--feature_selection", type=str, default='variance', help="")
+    parser.add_argument("--feature_selection", type=str, default='mutual_info_classif', help="")
     parser.add_argument("--feature_selection_threshold", type=float, default=0.,
                         help="Mutual Information classification cutoff")
     parser.add_argument("--spd", type=str, default="200")
@@ -435,11 +439,14 @@ if __name__ == "__main__":
     parser.add_argument("--find_peaks", type=int, default=0)
     parser.add_argument("--lowess", type=int, default=0)
     parser.add_argument("--align_peaks", type=int, default=0)
-    parser.add_argument("--make_data", type=int, default=0)
+    parser.add_argument("--make_data", type=int, default=1)
+    parser.add_argument("--n_splits", type=int, default=5)
+    parser.add_argument("--groupkfold", type=int, default=0)
 
     args = parser.parse_args()
     args.combat_corr = 0  # TODO to remove
 
+    args.k = int(args.k)
     if float(args.mz_bin) >= 1:
         args.mz_bin = int(float(args.mz_bin))
     else:
@@ -473,6 +480,7 @@ if __name__ == "__main__":
     if args.test_run:
         args.run_name = 'test'
 
+
     bins = {
         'mz_bin_post': args.mz_bin_post,
         'rt_bin_post': args.rt_bin_post,
@@ -490,15 +498,18 @@ if __name__ == "__main__":
     dir_name = f"{script_dir}/{out_dest}/mz{args.mz_bin}/rt{args.rt_bin}/mzp{args.mz_bin_post}/" \
                f"rtp{args.rt_bin_post}/{args.spd}spd/ms2/combat{args.combat_corr}/" \
                f"shift{args.shift}/{args.scaler}/log{args.log2}/{args.feature_selection}/"
+    
+    batches = ['02-02-2024', '01-03-2024', '21-02-2024', '26-02-2024', '13-03-2024']
     dir_inputs = []
     for batch in os.listdir(f"{script_dir}/{args.resources_path}/{args.experiment}"):
-        if batch not in ['01-03-2024']:
+        if batch not in batches:
             continue
         if 'matrices' == batch or 'mzdb' == batch or 'time.txt' == batch:
             continue
         input_dir = f"{args.resources_path}/{args.experiment}/{batch}/tsv"
         dir_inputs += [f"{script_dir}/{input_dir}/mz{args.mz_bin}/rt{args.rt_bin}/{args.spd}spd/ms2/all/"]
 
+    args.run_name = f"{args.run_name}_{'-'.join(batches)}_gkf{args.groupkfold}_{args.n_splits}splits"
     matrix_filename = f'{dir_name}/{args.run_name}/data_matrix_tmp.pkl'
     columns_filename = f'{dir_name}/{args.run_name}/columns.pkl'
     labels_filename = f'{dir_name}/{args.run_name}/labels.pkl'
@@ -546,6 +557,7 @@ if __name__ == "__main__":
         columns = load(open(columns_filename, 'rb'))
         labels = load(open(labels_filename, 'rb'))
     print("Finding not zeros only columns...")
+    print('\nComplete data shape', data_matrix.shape)
 
     # TODO only pass and return a list of list of columns. data_matrix could be seperated without taking more space
     # TODO now the space doubles here
@@ -573,6 +585,7 @@ if __name__ == "__main__":
     pool.join()
 
     print("Finding not zeros columns...")
+    print('\nComplete data shape', data_matrix.shape)
     dframe_list = split_sparse(data_matrix, cols_per_split=int(1e4), columns=new_columns)
     n_cpus = multiprocessing.cpu_count() - 1
     # if n_cpus > len(dframe_list):
@@ -654,18 +667,15 @@ if __name__ == "__main__":
     if bacteria_to_keep is not None:
         bacteria_to_keep = [x if 'blk' not in x else 'blk' for x in bacteria_to_keep]
 
-
     print('\nComplete data shape', data.shape)
 
     fs = get_feature_selection_method(args.feature_selection)
 
     print(f"Calculating {args.feature_selection}\n")
     if args.feature_selection == 'variance':
-        process_sparse_data(data, cats, columns, model=fs, dirname=dir_name, k=int(args.k), 
-                    feature_selection=args.feature_selection, run_name=args.run_name)
+        process_sparse_data(data, cats, batches, columns, model=fs, dirname=dir_name, args=args)
     else:
-        process_sparse_data_supervised(data, cats, columns, model=fs, dirname=dir_name, k=int(args.k), 
-                    feature_selection=args.feature_selection, run_name=args.run_name, n_splits=5)
+        process_sparse_data_supervised(data, cats, batches, columns, model=fs, dirname=dir_name, args=args)
 
     args.mutual_info_path = f'{dir_name}/{args.run_name}/{args.feature_selection}_scores.csv'
     if args.k > -1:
@@ -705,3 +715,4 @@ if __name__ == "__main__":
         f'{dir_name}/{args.run_name}/pool_inputs.csv',
         index=True, index_label='ID')
     print('Duration: {}'.format(datetime.now() - start_time))
+

@@ -1,6 +1,7 @@
 import glob
 import multiprocessing
 import os
+import pickle
 
 import numpy as np
 import pandas as pd
@@ -87,7 +88,6 @@ def keep_not_zeros_sparse(data, columns, nums, threshold=0.3):
     # print("Removing zeros...")
     if len(not_zeros_cols) > 0:
         # data = data[:, not_zeros_cols]
-        print(data.shape, len(not_zeros_cols), len(columns), len(nums))
         try:
             columns = [columns[c] for c in not_zeros_cols]
             nums = [nums[c] for c in not_zeros_cols]
@@ -126,9 +126,9 @@ def keep_not_duplicated(data, threshold=0.95):
     return data, not_duplicates_cols
 
 
-def process_sparse_data(data, cats, columns, model, dirname, feature_selection, k=10000, run_name=''):
-    if k == -1:
-        k = data.shape[1]
+def process_sparse_data(data, cats, columns, model, dirname, args):
+    if args.k == -1:
+        args.k = data.shape[1]
     datasum = data.sum(0)
     inds_zeros = [i for i in range(datasum.shape[1]) if datasum[0, i] == 0]
 
@@ -161,24 +161,24 @@ def process_sparse_data(data, cats, columns, model, dirname, feature_selection, 
 
     top_indices = np.argsort(mi.values.reshape(-1))[::-1]
     top_scores = np.sort(mi.values.reshape(-1))[::-1]
-    top_k_indices = top_indices[:k].reshape(-1)
-    top_k_scores = top_scores[:k].reshape(-1)
-    # top_columns = data.columns[top_indices]
+    top_k_indices = top_indices[:args.k].reshape(-1)
+    top_k_scores = top_scores[:args.k].reshape(-1)
     top_k_columns = np.array(columns)[top_k_indices]
 
     features_scores = pd.DataFrame(top_k_scores.reshape([-1, 1]),
                                    columns=['score'],
                                    index=top_k_columns)
-    os.makedirs(f'{dirname}/{run_name}/', exist_ok=True)
+    os.makedirs(f'{dirname}/{args.run_name}/', exist_ok=True)
     features_scores.to_csv(
-        f'{dirname}/{run_name}/{feature_selection}_scores.csv',
-        index_label='minp_maxp_rt_mz')
+        f'{dirname}/{args.run_name}/{args.feature_selection}_scores.csv',
+        index_label='minp_maxp_rt_mz'
+    )
 
 
-def process_sparse_data_supervised(data, cats, columns, model, dirname, feature_selection, k=10000, run_name='', n_splits=5, groupkfold=1):
+def process_sparse_data_supervised(data, cats, batches, columns, model, dirname, args):
     # TODO POOLS HANDLING
-    if k == -1:
-        k = data.shape[1]
+    if args.k == -1:
+        args.k = data.shape[1]
     datasum = data.sum(0)
     inds_zeros = [i for i in range(datasum.shape[1]) if datasum[0, i] == 0]
 
@@ -196,28 +196,29 @@ def process_sparse_data_supervised(data, cats, columns, model, dirname, feature_
     # assert all columns with only 0s are removed
     assert len([i for i in range(datasum.shape[1]) if datasum[0, i] == 0]) == 0
     # data.to_csv('train_df.csv')
-    features_scores = [None for _ in range(n_splits)]
-    if groupkfold:
-        skf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
-        train_nums = np.arange(0, len(data['labels']['train']))
-        # Remove samples from unwanted batches
-        splitter = skf.split(train_nums, data['labels']['train'], data['batches']['train'])
-        skf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
-        train_nums_pool = np.arange(0, len(data['labels']['train_pool']))
-    else:
-        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-        train_nums = np.arange(0, len(data['labels']['train']))
-        splitter = skf.split(train_nums, data['labels']['train']).__next__()
-        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-        train_nums_pool = np.arange(0, len(data['labels']['train_pool']))
+    features_scores = [None for _ in range(args.n_splits)]
 
-    for i in range(n_splits):
-        dframe_list = split_sparse(data, columns, cols_per_split=int(1e3))
+    for i in range(args.n_splits):
+        if args.groupkfold:
+            skf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=i)
+            train_nums = np.arange(0, data.shape[0])
+            splitter = skf.split(train_nums, cats, batches)
+            # train_nums_pool = np.arange(0, len(data['labels']['train_pool']))
+        else:
+            skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=i)
+            train_nums = np.arange(0, data.shape[0])
+            splitter = skf.split(train_nums, cats)
+        # train_nums_pool = np.arange(0, len(data['labels']['train_pool']))
+        _, valid_inds = splitter.__next__()
+        _, test_inds = splitter.__next__()
+        train_inds = [x for x in train_nums if x not in np.concatenate((valid_inds, test_inds))]
+        
+        dframe_list = split_sparse(data[train_inds], columns, cols_per_split=int(1e3))
 
-        process = Process(model, dframe_list[0], cats, dframe_list[1], np.ceil(data.shape[1] / int(1e3)))
+        process = Process(model, dframe_list[0], cats[train_inds], dframe_list[1], np.ceil(data.shape[1] / int(1e3)))
 
-        # TODO This was probably because an error occured with too many processes. Check if it's still necessary
-        pool = multiprocessing.Pool(int(multiprocessing.cpu_count() / 10))
+        # TODO If there is an error, there might be a problem with the number of processes
+        pool = multiprocessing.Pool(int(multiprocessing.cpu_count() - 2))
 
         mi = pd.concat(
             pool.map(process.process,
@@ -227,19 +228,40 @@ def process_sparse_data_supervised(data, cats, columns, model, dirname, feature_
 
         top_indices = np.argsort(mi.values.reshape(-1))[::-1]
         top_scores = np.sort(mi.values.reshape(-1))[::-1]
-        top_k_indices = top_indices[:k].reshape(-1)
-        top_k_scores = top_scores[:k].reshape(-1)
+        top_k_indices = top_indices[:args.k].reshape(-1)
+        top_k_scores = top_scores[:args.k].reshape(-1)
         # top_columns = data.columns[top_indices]
         top_k_columns = np.array(columns)[top_k_indices]
 
         features_scores[i] = pd.DataFrame(top_k_scores.reshape([-1, 1]),
                                     columns=['score'],
                                     index=top_k_columns)
-        os.makedirs(f'{dirname}/{run_name}/', exist_ok=True)
+        os.makedirs(f'{dirname}/{args.run_name}/', exist_ok=True)
         features_scores[i].to_csv(
-            f'{dirname}/{run_name}/{feature_selection}_scores_{i}.csv',
-            index_label='minp_maxp_rt_mz')
+            f'{dirname}/{args.run_name}/{args.feature_selection}_scores_{i}.csv',
+            index_label='minp_maxp_rt_mz'
+        )
+        inds = {
+            'train': train_inds,
+            'valid': valid_inds,
+            'test': test_inds
+        }
+        pickle.dump(inds, open(f'{dirname}/{args.run_name}/indices_{i}.pkl', 'wb'))
 
+
+    # concat all features scores after changing the order based on features_scores[0]
+    features_scores = pd.concat(
+        [features_scores[i].reindex(features_scores[0].index) for i in range(args.n_splits)],
+        axis=1
+    )
+    features_scores = features_scores.mean(axis=1)
+    features_scores = features_scores.sort_values(ascending=False)
+    features_scores.to_csv(
+        f'{dirname}/{args.run_name}/{args.feature_selection}_scores.csv',
+        index_label='minp_maxp_rt_mz'
+    )
+    
+    
     # TODO save a version of the features scores averaged over all splits and ordered by best scores
     
 
@@ -476,7 +498,7 @@ class Process:
         """
         Process function
         """
-        print(f"Process: {i}/{self.n_processes}", self.model)
+        print(f"Process: {i}/{self.n_processes}")
         # results = self.model(self.data[i])
         data = self.data[i].toarray()
         if self.model == VarianceThreshold:
