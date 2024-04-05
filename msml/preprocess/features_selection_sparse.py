@@ -503,7 +503,7 @@ class Process:
         data = self.data[i].toarray()
         if self.model == VarianceThreshold:
             model = self.model(threshold=0)
-            _ = model.fit_transform(data[i])
+            _ = model.fit_transform(data)
             results = model.variances_
         else:
             results = self.model(data, self.labels)

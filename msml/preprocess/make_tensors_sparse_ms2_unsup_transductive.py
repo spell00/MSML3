@@ -439,7 +439,7 @@ if __name__ == "__main__":
     parser.add_argument("--find_peaks", type=int, default=0)
     parser.add_argument("--lowess", type=int, default=0)
     parser.add_argument("--align_peaks", type=int, default=0)
-    parser.add_argument("--make_data", type=int, default=1)
+    parser.add_argument("--make_data", type=int, default=0)
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--groupkfold", type=int, default=0)
 
@@ -673,7 +673,7 @@ if __name__ == "__main__":
 
     print(f"Calculating {args.feature_selection}\n")
     if args.feature_selection == 'variance':
-        process_sparse_data(data, cats, batches, columns, model=fs, dirname=dir_name, args=args)
+        process_sparse_data(data, cats, columns, model=fs, dirname=dir_name, args=args)
     else:
         process_sparse_data_supervised(data, cats, batches, columns, model=fs, dirname=dir_name, args=args)
 
