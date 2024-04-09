@@ -79,7 +79,10 @@ class MakeTensorsMultiprocess:
         """
         startTime = time.time()
         # print(len(gc.get_objects()))
-        file, label = self.tsv_list[index], self.labels_list[index]
+        try:
+            file, label = self.tsv_list[index], self.labels_list[index]
+        except:
+            exit('Error with tsv index')
         try:
             tsv = pd.read_csv(file, header=0, sep='\t')
             tsv = tsv.astype({c: np.float32 for c in tsv.select_dtypes(include='float64').columns})
@@ -499,7 +502,7 @@ if __name__ == "__main__":
                f"rtp{args.rt_bin_post}/{args.spd}spd/ms2/combat{args.combat_corr}/" \
                f"shift{args.shift}/{args.scaler}/log{args.log2}/{args.feature_selection}/"
     
-    batches = ['02-02-2024', '01-03-2024', '21-02-2024', '26-02-2024', '13-03-2024']
+    batches = ['03-04-2024', '29-03-2024', '01-03-2024', '21-02-2024', '26-02-2024', '13-03-2024', '02-02-2024']
     dir_inputs = []
     for batch in os.listdir(f"{script_dir}/{args.resources_path}/{args.experiment}"):
         if batch not in batches:

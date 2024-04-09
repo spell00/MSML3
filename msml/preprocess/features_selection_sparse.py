@@ -308,6 +308,7 @@ def make_lists(dirinput, path, run_name):
     # for psample in pool_files:
     #     tsv_list.remove(psample)
     labels_list = []
+    tsvs_list = []
     for _, file in enumerate(tsv_list):
         if 'hela' in file:
             continue
@@ -330,7 +331,8 @@ def make_lists(dirinput, path, run_name):
         # label = f"{batch}_{'_'.join(tmp[-3:])}".lower()
         label = f"{label}_{batch}_{manip}_{urine}_{concentration}".lower()
         labels_list.append(label)
-
+        tsvs_list.append(file)
+    del tsv_list
     categories = [x.split('_')[0] for x in labels_list]
 
     names_df = pd.DataFrame(
@@ -345,7 +347,7 @@ def make_lists(dirinput, path, run_name):
                     header=['ID', 'fname', 'category'])
     return {
         "samples": samples,
-        "tsv": tsv_list,
+        "tsv": tsvs_list,
         "labels": labels_list,
     }
 
