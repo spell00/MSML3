@@ -15,6 +15,7 @@ library(SummarizedExperiment)
 all_dirs <- list.dirs('resources/bacteries_2024', full.names = FALSE, recursive = FALSE)
 # Filter out the directory you want to exclude
 all_dirs <- all_dirs[!all_dirs %in% "matrices"]
+all_dirs <- c('01-03-2024', '13-03-2024')
 
 # Create empty list to store mzmls
 mzmls <- list()
@@ -77,7 +78,7 @@ rownames(ann) <- bpis_bin$sample_name
 # 2.3 Chromatic peak detection
 faahko <- findChromPeaks(faahko, param = CentWaveParam(snthresh = 2))
 
-pp <- MergeNeighboringPeaksParam(expandRt = 4)
+mpp <- MergeNeighboringPeaksParam(expandRt = 4)
 faahko <- refineChromPeaks(faahko, mpp)
 
 # 2.4 Alignment
@@ -97,4 +98,8 @@ res <- quantify(faahko, value = "into", method = "sum")
 matrix <- assay(res)
 
 # save the matrix
-write.csv(matrix, "resources/bacteries_2024/matrix.csv")
+# paste all elements of list
+fname <- paste0("resources/bacteries_2024/matrices/matrix_", paste(all_dirs, collapse='_'), ".csv")
+write.csv(matrix, fname)
+
+#
