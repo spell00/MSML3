@@ -33,6 +33,8 @@ from features_selection_sparse import keep_only_not_zeros_sparse, keep_not_zeros
 from scipy.signal import find_peaks
 from statsmodels.nonparametric.smoothers_lowess import lowess
 from msalign import msalign
+from functools import reduce
+from sklearn.preprocessing import minmax_scale as scale
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(filename='make_tensors_ms2.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
@@ -175,10 +177,7 @@ class MakeTensorsMultiprocess:
             if self.log2 == 'inloop':
                 final[min_parent].loc[mz].loc[rt] += np.log1p(intensity)
             else:
-                try:
-                    final[min_parent].loc[mz].loc[rt] += intensity
-                except:
-                    pass
+                final[min_parent].loc[mz].loc[rt] += intensity
             # if self.is_sparse:
             #     final[min_parent][rt] = final[min_parent][rt].astype(spdtypes)
             # del min_parent, rt, mz, intensity, line
@@ -202,8 +201,15 @@ class MakeTensorsMultiprocess:
             # img = nib.Nifti1Image(np.stack(list(final.values())), np.eye(4))
             # img.uncache()
             # nib.save(img, f'{self.path}/nibabel/{label}.nii')
-            _ = [self.save_images_and_csv(matrix, f"{label}", min_parent) for i, (min_parent, matrix) in
+            df = np.stack(list(final.values()))
+            # df = df / df.max(axis=(1, 2), keepdims=True)
+            df = df / df.max()
+            _ = [self.save_images_and_csv3d(matrix, df[i], f"{label}", min_parent) for i, (min_parent, matrix) in
                  enumerate(zip(final, list(final.values())))]
+            
+            df = df.sum(0)
+            df = df / df.max()
+            _ = self.save_images_and_csv(reduce(lambda x, y: x.astype(float).add(y.astype(float)), final.values()), df, label)
             # del img
         # df = np.stack(list(final.values()))
         # for x in list(final.keys()):
@@ -221,12 +227,21 @@ class MakeTensorsMultiprocess:
         """
         return len(self.tsv_list)
 
-    def save_images_and_csv(self, final, label, i):
+    def save_images_and_csv3d(self, final, df, label, i):
         os.makedirs(f"{self.path}/csv3d/{label}/", exist_ok=True)
         os.makedirs(f"{self.path}/images3d/{label}/", exist_ok=True)
         final.to_csv(f"{self.path}/csv3d/{label}/{label}_{i}.csv", index_label='ID')
-        im = Image.fromarray(np.uint8(cm.gist_earth(final.values) * 255))
+        im = Image.fromarray(np.uint8(cm.gist_earth(df) * 255))
         im.save(f"{self.path}/images3d/{label}/{label}_{i}.png")
+        im.close()
+        del im
+
+    def save_images_and_csv(self, final, df, label):
+        os.makedirs(f"{self.path}/csv/", exist_ok=True)
+        os.makedirs(f"{self.path}/images/", exist_ok=True)
+        final.to_csv(f"{self.path}/csv/{label}.csv", index_label='ID')
+        im = Image.fromarray(np.uint8(cm.gist_earth(df) * 255))
+        im.save(f"{self.path}/images/{label}.png")
         im.close()
         del im
 
@@ -499,13 +514,15 @@ if __name__ == "__main__":
 
     script_dir = os.path.dirname(os.path.realpath(__file__))
     dir_name = f"{script_dir}/{out_dest}/mz{args.mz_bin}/rt{args.rt_bin}/mzp{args.mz_bin_post}/" \
-               f"rtp{args.rt_bin_post}/{args.spd}spd/ms2/combat{args.combat_corr}/" \
+               f"rtp{args.rt_bin_post}/thr{args.threshold}/{args.spd}spd/ms2/combat{args.combat_corr}/" \
                f"shift{args.shift}/{args.scaler}/log{args.log2}/{args.feature_selection}/"
     
     batches = ['03-04-2024', '29-03-2024', '01-03-2024', '21-02-2024', '26-02-2024', '13-03-2024', '02-02-2024']
+    # batches = ['01-03-2024']
     dir_inputs = []
     for batch in os.listdir(f"{script_dir}/{args.resources_path}/{args.experiment}"):
         if batch not in batches:
+            continue
             continue
         if 'matrices' == batch or 'mzdb' == batch or 'time.txt' == batch:
             continue
