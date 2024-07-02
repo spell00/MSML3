@@ -12,7 +12,7 @@ from setuptools import setup
 setup(
     name='msml',
     version='0.2',
-    packages=["msml", 'msml.dl', 'msml.dl.models', 'msml.dl.models.pytorch', 'msml.dl.models.pytorch.utils', 'msml.preprocess', 'msml.utils'],
+    packages=["msml", 'msml.preprocess', 'msml.utils'],
     url='',
     license='',
     author='simon pelletier',

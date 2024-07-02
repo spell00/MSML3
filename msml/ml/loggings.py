@@ -1,0 +1,594 @@
+import os
+import numpy as np
+import pandas as pd
+import copy
+import matplotlib.pyplot as plt
+from matplotlib import rcParams, cycler
+# robjects
+from rpy2.robjects import pandas2ri
+from rpy2.robjects import r as robjects
+from rpy2.robjects.conversion import localconverter
+# sklearn
+import sklearn
+from sklearn.preprocessing import OneHotEncoder
+from scipy.spatial.distance import cdist, pdist
+from sklearn.decomposition import PCA
+from umap.umap_ import UMAP
+from tabulate import tabulate
+
+from msml.utils.pool_metrics import get_PCC, get_batches_euclidean, get_euclidean
+from msml.utils.plotting import confidence_ellipse
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+# from scipy.stats import entropy
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import silhouette_score, adjusted_rand_score, adjusted_mutual_info_score
+from scipy import stats
+from statsmodels.stats.multitest import multipletests
+# LDA
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
+from torch.nn import functional as F
+
+def make_pval_table(data, unique_labels):
+    print("Mann      pval min    n pvals < 0.05")
+    table = pd.DataFrame(columns=['pval', 'n'])
+    i = 0
+    for i, label in enumerate(unique_labels[:-1]):
+        for label2 in unique_labels[i+1:]:
+            if label != label2 and label != 'pool' and label2 != 'pool':
+                pvals = stats.mannwhitneyu(
+                    data['inputs']['all'].iloc[np.argwhere(data['labels']['all'] == label).squeeze()], 
+                    data['inputs']['all'].iloc[np.argwhere(data['labels']['all'] == label2).squeeze()]
+                )
+                tmp = multipletests(pvals[1], 0.05, 'fdr_bh')[1]
+                table.loc[f'{label}_{label2}', 'pval'] = tmp.min()
+                table.loc[f'{label}_{label2}', 'n'] = len([x for x in tmp if x < 0.05])
+                i += 1
+    print(tabulate(table))
+
+    print('ttests')
+    table = pd.DataFrame(columns=['pval'])
+    i = 0
+    for i, label in enumerate(unique_labels[:-1]):
+        for label2 in unique_labels[i+1:]:
+            if label != label2 and label != 'pool' and label2 != 'pool':
+                pvals = stats.ttest_ind(
+                    data['inputs']['all'].iloc[np.argwhere(data['labels']['all'] == label).squeeze()], 
+                    data['inputs']['all'].iloc[np.argwhere(data['labels']['all'] == label2).squeeze()]
+                )
+                tmp = multipletests(pvals[1], 0.05, 'fdr_bh')[1]
+                table.loc[f'{label}_{label2}', 'pval'] = tmp.min()
+                table.loc[f'{label}_{label2}', 'n'] = len([x for x in tmp if x < 0.05])
+                i += 1
+    print(tabulate(table))
+
+def log_fct(data, form, metrics, make_pval=False):
+    metrics = log_metrics(data, metrics, form)
+    return metrics
+
+def log_ord(data, uniques, path, scaler_name, run=None):
+    unique_labels = uniques['labels']
+    unique_batches = uniques['batches']
+    unique_manips = uniques['manips']
+    unique_urines = uniques['urines']
+    unique_concs = uniques['concs']
+    log_ORD({'model': PCA(n_components=2), 'name': f'PCA_{scaler_name}'}, data, 
+            {'batches': unique_batches, 'labels': unique_labels, 
+             'manips': unique_manips, 'urines': unique_urines, 
+             'concs': unique_concs
+            }, path, scaler_name, run)
+    log_ORD({'model': UMAP(n_components=2), 'name': f'UMAP_{scaler_name}'}, data, 
+            {'batches': unique_batches, 'labels': unique_labels, 
+             'manips': unique_manips, 'urines': unique_urines, 
+             'concs': unique_concs
+            }, path, scaler_name, run)
+    if unique_labels is not None:
+        log_LDA(LDA, data, {'batches': unique_batches, 'labels': unique_labels}, path, scaler_name)
+                    
+
+def pyGPCA(data, group, name, metrics):
+    gPCA = importr('gPCA')
+
+    newdata = robjects.r.matrix(robjects.FloatVector(np.array(data['inputs'][group]).reshape(-1)), nrow=data['inputs'][group].shape[0])
+    new_batches = robjects.r.matrix(robjects.IntVector(data['batches'][group]), nrow=data['inputs'][group].shape[0])
+
+    results = gPCA.gPCA_batchdetect(newdata, new_batches)
+    with localconverter(robjects.default_converter + pandas2ri.converter):
+        results = { key : np.array(robjects.conversion.rpy2py(results.rx2(key))) for key in results.names }
+
+    if 'pool' in name:
+        delta_name = 'delta_pool'
+        name = name.split('_')[1]
+    else:
+        delta_name = 'delta'
+    if name not in metrics:
+        metrics[name] = {}
+    metrics[name][delta_name] = results['delta'][0]
+    # metrics[name]['delta.pval'] = results[1]
+    return metrics, results
+
+def log_ORD(ordin, data, uniques, path, scaler_name, run=None):
+    model = ordin['model']
+    data = copy.deepcopy(data)
+    pcs_train = model.fit_transform(data['inputs']['all'])
+    pcs_train_df = pd.DataFrame(data=pcs_train, columns=['PC 1', 'PC 2'])
+    try:
+        ev = model.explained_variance_ratio_
+        pc1 = 'Component_1 : ' + str(np.round(ev[0] * 100, decimals=2)) + "%"
+        pc2 = 'Component_2 : ' + str(np.round(ev[1] * 100, decimals=2)) + "%"
+    except:
+        pc1 = 'Component_1'
+        pc2 = 'Component_2'
+
+    for name in list(uniques.keys()):
+        if uniques[name] is None:
+            continue
+        fig = plt.figure(figsize=(8, 8))
+        ax = fig.add_subplot(111)
+        ax.set_xlabel(pc1, fontsize=20)
+        ax.set_ylabel(pc2, fontsize=20)
+
+        num_targets = len(uniques[name])
+        cmap = plt.cm.tab20
+
+        cols = cmap(np.linspace(0, 1, len(uniques[name]) + 1))
+        colors = rcParams['axes.prop_cycle'] = cycler(color=cols)
+        colors_list = {name: [] for name in ['all']}
+        data1_list = {name: [] for name in ['all']}
+        data2_list = {name: [] for name in ['all']}
+        new_labels = {name: [] for name in ['all']}
+        new_cats = {name: [] for name in ['all']}
+
+        ellipses = []
+        unique_cats_train = np.array([])
+        for df_name, df, labels in zip(['all'], [pcs_train_df], [data[name]['all']]):
+            for t, target in enumerate(uniques[name]):
+                indices_to_keep = [True if x == target else False for x in list(labels)]
+                data1 = list(df.loc[indices_to_keep, 'PC 1'])
+                new_labels[df_name] += [target for _ in range(len(data1))]
+                new_cats[df_name] += [target for _ in range(len(data1))]
+
+                data2 = list(df.loc[indices_to_keep, 'PC 2'])
+                data1_list[df_name] += [data1]
+                data2_list[df_name] += [data2]
+                colors_list[df_name] += [np.array([[cols[t]] * len(data1)])]
+                if len(indices_to_keep) > 1 and df_name == 'all_data' or target not in unique_cats_train:
+                    unique_cats_train = np.unique(np.concatenate((new_labels[df_name], unique_cats_train)))
+                    try:
+                        confidence_ellipses = confidence_ellipse(np.array(data1), np.array(data2), ax, 1.5,
+                                                                 edgecolor=cols[t],
+                                                                 train_set=True)
+                        ellipses += [confidence_ellipses[1]]
+                    except:
+                        pass
+
+        for df_name, marker in zip(list(data1_list.keys()), ['o']):
+            data1_vector = np.hstack([d for d in data1_list[df_name] if len(d) > 0]).reshape(-1, 1)
+            colors_vector = np.hstack([d for d in colors_list[df_name] if d.shape[1] > 0]).squeeze()
+            data2_vector = np.hstack(data2_list[df_name]).reshape(-1, 1)
+            data_colors_vector = np.concatenate((data1_vector, data2_vector, colors_vector), axis=1)
+            data2 = data_colors_vector[:, 1]
+            col = data_colors_vector[:, 2:]
+            data1 = data_colors_vector[:, 0]
+
+            ax.scatter(data1, data2, s=50, alpha=1.0, c=col, label=new_labels[df_name], marker=marker)
+            custom_lines = [Line2D([0], [0], color=cmap(x), lw=4) for x in np.linspace(0, 1, len(uniques[name]) + 1)]
+            if 'pool' in uniques[name]:
+                uniques[name][np.argwhere(uniques[name] == 'pool')] = 'QC'
+            
+            if len(custom_lines) < 30:
+                ax.legend(custom_lines, uniques[name].tolist(), fontsize=10)
+
+        plt.show()
+        plt.savefig(f'{path}/{ordin["name"]}_{name}_{scaler_name}.png')
+        if run is not None:
+            run[f'{ordin["name"]}/{name}'].upload(fig)
+        plt.close()
+
+def log_LDA(ordin, data, uniques, path, scaler_name, model_name="LDA"):
+    for name in list(uniques.keys()):
+        if len(uniques[name]) == 1:
+            continue
+        train_nums = np.arange(0, len(data['labels']['all']))
+        scores = []
+        # Remove samples from unwanted batches
+        if len(uniques['batches']) == 1:
+            skf = sklearn.model_selection.StratifiedKFold(n_splits=5, shuffle=False, random_state=None)
+            splitter = skf.split(train_nums, data['labels']['all'])
+        else:
+            skf = sklearn.model_selection.StratifiedGroupKFold(n_splits=5, shuffle=False, random_state=None)
+            splitter = skf.split(train_nums, data['labels']['all'], data['batches']['all'])
+        for i, (train_inds, valid_inds) in enumerate(splitter):
+            if len(uniques[name]) > 2:
+                n_comp = 2
+            else:
+                n_comp = 1
+            model = ordin(n_components=n_comp)
+            
+            pcs_train = model.fit_transform(data['inputs']['all'].iloc[train_inds], data[name]['all'][train_inds])
+            pcs_valid = model.transform(data['inputs']['all'].iloc[valid_inds])
+            scores += [model.score(data['inputs']['all'].iloc[valid_inds], data[name]['all'][valid_inds])]
+            if pcs_train.shape[1] == 1:
+                n_comp = 1
+            if i == 0:
+                fig = plt.figure(figsize=(12, 12))
+                ax = fig.add_subplot(111)
+
+                if n_comp > 1:
+                    pcs_train_df = pd.DataFrame(data=pcs_train, columns=['LD1', 'LD2'])
+                    pcs_valid_df = pd.DataFrame(data=pcs_valid, columns=['LD1', 'LD2'])
+                    # pcs_test_df = pd.DataFrame(data=pcs_test, columns=['LD1', 'LD2'])
+                else:
+                    pcs_train_df = pd.DataFrame(data=pcs_train, columns=['LD1'])
+                    pcs_valid_df = pd.DataFrame(data=pcs_valid, columns=['LD1'])
+                    # pcs_test_df = pd.DataFrame(data=pcs_test, columns=['LD1'])
+
+                try:
+                    ev = model.explained_variance_ratio_
+                    pc1 = 'Component_1 : ' + str(np.round(ev[0] * 100, decimals=2)) + "%"
+                    pc2 = 'Component_2 : ' + str(np.round(ev[1] * 100, decimals=2)) + "%"
+                except:
+                    pc1 = 'Component_1'
+                    pc2 = 'Component_2'
+
+                ax.set_xlabel(pc1, fontsize=15)
+                ax.set_ylabel(pc2, fontsize=15)
+                ax.set_title(f"2 component LDA", fontsize=20)
+
+                num_targets = len(uniques[name])
+                cmap = plt.cm.tab20
+
+                cols = cmap(np.linspace(0, 1, len(uniques[name]) + 1))
+                colors = rcParams['axes.prop_cycle'] = cycler(color=cols)
+                colors_list = {name: [] for name in ['train_data', 'valid_data']}
+                data1_list = {name: [] for name in ['train_data', 'valid_data']}
+                data2_list = {name: [] for name in ['train_data', 'valid_data']}
+                new_labels = {name: [] for name in ['train_data', 'valid_data']}
+                new_cats = {name: [] for name in ['train_data', 'valid_data']}
+
+                ellipses = []
+                unique_cats_train = np.array([])
+
+                for df_name, df, labels in zip(['train_data', 'valid_data'],
+                                               [pcs_train_df, pcs_valid_df],
+                                               [data[name]['all'][train_inds], data[name]['all'][valid_inds]]):
+                    for t, target in enumerate(uniques[name]):
+                        indices_to_keep = [True if x == target else False for x in
+                                           list(labels)]  # 0 is the name of the column with target values
+                        data1 = list(df.loc[indices_to_keep, 'LD1'])
+                        new_labels[df_name] += [target for _ in range(len(data1))]
+                        new_cats[df_name] += [target for _ in range(len(data1))]
+
+                        data1_list[df_name] += [data1]
+                        colors_list[df_name] += [np.array([[cols[t]] * len(data1)])]
+                        if n_comp > 1:
+                            data2 = list(df.loc[indices_to_keep, 'LD2'])
+                            data2_list[df_name] += [data2]
+                        # if len(indices_to_keep) > 1 and df_name == 'all_data' or target not in unique_cats_train:
+                        unique_cats_train = np.unique(np.concatenate((new_labels[df_name], unique_cats_train)))
+                        if n_comp > 1:
+                            try:
+                                confidence_ellipses = confidence_ellipse(np.array(data1), np.array(data2), ax, 1.5,
+                                                                         edgecolor=cols[t],
+                                                                         train_set=True)
+                                ellipses += [confidence_ellipses[1]]
+                            except:
+                                pass
+
+                for df_name, marker in zip(list(data1_list.keys()), ['o', '*']):
+                    data1_vector = np.hstack([d for d in data1_list[df_name] if len(d) > 0]).reshape(-1, 1)
+                    colors_vector = np.hstack([d for d in colors_list[df_name] if d.shape[1] > 0]).squeeze()
+                    if n_comp > 1:
+                        data2_vector = np.hstack(data2_list[df_name]).reshape(-1, 1)
+                        data_colors_vector = np.concatenate((data1_vector, data2_vector, colors_vector), axis=1)
+                        data1 = data_colors_vector[:, 0]
+                        data2 = data_colors_vector[:, 1]
+                        col = data_colors_vector[:, 2:]
+                        ax.scatter(data1, data2, s=50, alpha=1.0, c=col, label=new_labels[df_name], marker=marker)
+                    else:
+                        data_colors_vector = np.concatenate((data1_vector, colors_vector), axis=1)
+                        data1 = data_colors_vector[:, 0]
+                        col = data_colors_vector[:, 1:]
+                        ax.scatter(data1, np.random.random(len(data1)), s=50, alpha=1.0, c=col, label=new_labels[df_name],
+                                   marker=marker)
+
+                    custom_lines = [Line2D([0], [0], color=cmap(x), lw=4) for x in np.linspace(0, 1, len(uniques[name]) + 1)]
+                    ax.legend(custom_lines, uniques[name].tolist())
+
+                plt.show()
+                plt.savefig(f'{path}/{model_name}_{name}_{scaler_name}.png')
+                plt.close()
+
+def log_CCA(ordin, data, unique_cats, epoch):
+    fig = plt.figure(figsize=(12, 12))
+    ax = fig.add_subplot(111)
+
+    model = ordin['model']
+
+    try:
+        train_cats = OneHotEncoder().fit_transform(np.stack([np.argwhere(unique_cats == x) for x in train_labels]).reshape(-1, 1)).toarray()
+    except:
+        pass
+    # test_cats = [np.argwhere(unique_cats == x) for x in test_labels]
+    # inference_cats = [np.argwhere(unique_cats == x) for x in inference_labels]
+
+    pcs_train, _ = model.fit_transform(data['inputs']['train'], data['cats']['train'])
+    pcs_test = model.transform(data['inputs']['valid'])
+    pcs_inference = model.transform(data['inputs']['test'])
+
+    pcs_train_df = pd.DataFrame(data=pcs_train, columns=['PC 1', 'PC 2'])
+    pcs_test_df = pd.DataFrame(data=pcs_test, columns=['PC 1', 'PC 2'])
+    pcs_inference_df = pd.DataFrame(data=pcs_inference, columns=['PC 1', 'PC 2'])
+    try:
+        ev = model.explained_variance_ratio_
+        pc1 = 'Component_1 : ' + str(np.round(ev[0] * 100, decimals=2)) + "%"
+        pc2 = 'Component_2 : ' + str(np.round(ev[1] * 100, decimals=2)) + "%"
+    except:
+        pc1 = 'Component_1'
+        pc2 = 'Component_2'
+
+    ax.set_xlabel(pc1, fontsize=15)
+    ax.set_ylabel(pc2, fontsize=15)
+    ax.set_title(f"2 component {ordin['name']}", fontsize=20)
+
+    num_targets = len(unique_cats)
+    cmap = plt.cm.tab20
+
+    cols = cmap(np.linspace(0, 1, len(unique_cats) + 1))
+    colors = rcParams['axes.prop_cycle'] = cycler(color=cols)
+    colors_list = {name: [] for name in ['train_data', 'valid_data', 'test_data']}
+    data1_list = {name: [] for name in ['train_data', 'valid_data', 'test_data']}
+    data2_list = {name: [] for name in ['train_data', 'valid_data', 'test_data']}
+    new_labels = {name: [] for name in ['train_data', 'valid_data', 'test_data']}
+    new_cats = {name: [] for name in ['train_data', 'valid_data', 'test_data']}
+
+    ellipses = []
+    unique_cats_train = np.array([])
+    for df_name, df, labels in zip(['train_data', 'valid_data', 'test_data'],
+                                   [pcs_train_df, pcs_test_df, pcs_inference_df],
+                                   [data['labels']['train'], data['labels']['valid'], data['labels']['test']]):
+        for t, target in enumerate(unique_cats):
+            # final_labels = list(train_labels)
+            indices_to_keep = [True if x == target else False for x in
+                               list(labels)]  # 0 is the name of the column with target values
+            data1 = list(df.loc[indices_to_keep, 'PC 1'])
+            new_labels[df_name] += [target for _ in range(len(data1))]
+            new_cats[df_name] += [target for _ in range(len(data1))]
+
+            data2 = list(df.loc[indices_to_keep, 'PC 2'])
+            data1_list[df_name] += [data1]
+            data2_list[df_name] += [data2]
+            colors_list[df_name] += [np.array([[cols[t]] * len(data1)])]
+            if len(indices_to_keep) > 1 and df_name == 'train_data' or target not in unique_cats_train:
+                unique_cats_train = np.unique(np.concatenate((new_labels[df_name], unique_cats_train)))
+                try:
+                    confidence_ellipses = confidence_ellipse(np.array(data1), np.array(data2), ax, 1.5,
+                                                             edgecolor=cols[t],
+                                                             train_set=True)
+                    ellipses += [confidence_ellipses[1]]
+                except:
+                    pass
+
+    for df_name, marker in zip(list(data1_list.keys()), ['o', 'x', '*']):
+        data1_vector = np.hstack([d for d in data1_list[df_name] if len(d) > 0]).reshape(-1, 1)
+        colors_vector = np.hstack([d for d in colors_list[df_name] if d.shape[1] > 0]).squeeze()
+        data2_vector = np.hstack(data2_list[df_name]).reshape(-1, 1)
+        data_colors_vector = np.concatenate((data1_vector, data2_vector, colors_vector), axis=1)
+        data2 = data_colors_vector[:, 1]
+        col = data_colors_vector[:, 2:]
+        data1 = data_colors_vector[:, 0]
+
+        ax.scatter(data1, data2, s=50, alpha=1.0, c=col, label=new_labels[df_name], marker=marker)
+        custom_lines = [Line2D([0], [0], color=cmap(x), lw=4) for x in np.linspace(0, 1, len(unique_cats) + 1)]
+        if len(custom_lines) < 30:
+            ax.legend(custom_lines, unique_cats.tolist())
+
+    fig.savefig(f'{ordin["name"]}.png')
+    plt.close()
+
+def log_pool_metrics(data, batches, metrics, form):
+    metric = {}
+
+    for group in ['all']:
+        if 'pool' not in group:
+            try:
+                data[group] = data[group].to_numpy()
+                # data[f'{group}_pool'] = data[f'{group}_pool'].to_numpy()
+            except:
+                pass
+
+            metric[group] = {}
+            # metric[f'{group}_pool'] = {}
+            batch_train_samples = [[i for i, batch in enumerate(batches[group].tolist()) if batch == b] for b in
+                                   np.unique(batches[group])]
+            batch_pool_samples = [[i for i, batch in enumerate(batches[f"{group}_pool"].tolist()) if batch == b] for b in
+                                  np.unique(batches[f"{group}_pool"])]
+
+            batches_sample_indices = {
+                group: batch_train_samples,
+                # f'{group}_pool': batch_pool_samples,
+            }
+            # Average Pearson's Correlation Coefficients
+            try:
+                metric = get_PCC(data, batches, group, metric)
+            except:
+                pass
+
+            # Batch avg distance
+            try:
+                metric = get_batches_euclidean(data, batches_sample_indices, cdist, group, metric)
+            except:
+                pass
+
+            # avg distance
+            try:
+                metric = get_euclidean(data, pdist, group, metric)
+            except:
+                pass
+
+        # metrics[f'pool_metrics_{form}'] = metric
+    if form not in metrics:
+        metrics[form] = {}
+    for m in metric:
+        metrics[form][m] = metric[m]
+
+    return metrics
+
+def batch_entropy(proba):
+    prob_list = []
+    for prob in proba:
+        loc = 0
+        for p in prob:
+            loc -= p * np.log(p + 1e-8)
+        prob_list += [loc]
+    return np.mean(prob_list)
+
+def get_metrics(data, metrics, form):
+    # sets are grouped togheter for a single metric
+    new_data = data#.copy()
+    blancs_inds = np.argwhere(data['labels']['all'] == 'blanc').flatten()
+    new_data['labels']['all'] = new_data['labels']['all'][blancs_inds]
+    new_data['cats']['all'] = new_data['cats']['all'][blancs_inds]
+    new_data['concs']['all'] = new_data['concs']['all'][blancs_inds]
+    new_data['urines']['all'] = new_data['urines']['all'][blancs_inds]
+    new_data['manips']['all'] = new_data['manips']['all'][blancs_inds]
+    new_data['batches']['all'] = new_data['batches']['all'][blancs_inds]
+    new_data['inputs']['all'] = new_data['inputs']['all'].iloc[blancs_inds]
+    knns = {repres: KNeighborsClassifier(n_neighbors=20) for repres in ['domains', 'labels']}
+    # values = {group: {m : {'labels': [], 'domains': []} for m in ['lisi', 'kbet', 'silhouette', 'adjusted_rand_score', 'adjusted_mutual_info_score']} 
+    #           for group in ['train', 'valid', 'test', 'all', 'all_pool', 'train_pool', 'valid_pool', 'test_pool']}
+
+    if form not in metrics:
+        metrics[form] = {}
+    for group in ['all']:
+        # metrics[group] = {m : {'labels': [], 'domains': []} for m in ['lisi', 'kbet', 'silhouette', 'adjusted_rand_score', 'adjusted_mutual_info_score']} 
+        if group not in metrics[form]:
+            metrics[form][group] = {}
+        # keep only data where labels == blanc
+        if group == 'all':
+            knns['domains'].fit(new_data['inputs'][group], new_data['batches'][group])
+            knns['labels'].fit(new_data['inputs'][group], new_data['cats'][group])
+        if 'pool' not in group or 'all_pool' == group:
+            # for metric, funct in zip(['lisi', 'silhouette', 'kbet'], [rLISI, silhouette_score, rKBET]):  # 
+            for metric, funct in zip(['silhouette'], [silhouette_score]):  # 
+                try:
+                    metrics[form][group][metric] = {'labels': None, 'domains': None}
+                    metrics[form][group][metric]['domains'] = funct(new_data['inputs'][group], new_data['batches'][group])
+                    if 'pool' not in group:
+                        metrics[form][group][metric]['labels'] = funct(new_data['inputs'][group], new_data['cats'][group])
+                except:
+                    pass
+
+            domain_preds = knns['domains'].predict(new_data['inputs'][group].values)
+            metrics[form][group]['shannon'] = {'labels': None, 'domains': None}
+            metrics[form][group]['shannon']['domains'] = batch_entropy(knns['domains'].predict_proba(new_data['inputs'][group].values))
+            if 'pool' not in group:
+                labels_preds = knns['labels'].predict(new_data['inputs'][group].values)
+                metrics[form][group]['shannon']['labels'] = batch_entropy(knns['labels'].predict_proba(new_data['inputs'][group].values))
+
+            for metric, funct in zip(
+                    ['adjusted_rand_score', 'adjusted_mutual_info_score'],
+                    [adjusted_rand_score, adjusted_mutual_info_score]):
+                metrics[form][group][metric] = {'labels': None, 'domains': None}
+                metrics[form][group][metric]['domains'] = funct(new_data['batches'][group], domain_preds)
+                if 'pool' not in group:
+                    metrics[form][group][metric]['labels'] = funct(new_data['batches'][group], labels_preds)
+
+    return metrics
+
+def batch_f1_score(batch_score, class_score):
+    return 2 * (1 - batch_score) * (class_score) / (1 - batch_score + class_score)
+
+def log_metrics(data, metrics, form):
+    # unique_batches = set(batches['all'])
+    # if len(unique_labels) > 2:
+    #     bout = 0
+    # else:
+    #     bout = 1
+    if form not in metrics:
+        metrics[form] = {}
+    metrics = get_metrics(data, metrics, form)
+    # for repres in ['inputs']:
+    #     # for metric in ['silhouette', 'kbet', 'lisi']:
+    #     for metric in ['silhouette']:
+    #         for group in ['all']:
+    #             if metric == 'lisi':
+    #                 try:
+    #                     metrics[form][group][metric]['F1'] = batch_f1_score(
+    #                         batch_score=metrics[form][group][metric]['domains'][0] / len(unique_batches),
+    #                         class_score=metrics[form][group][metric]['labels'][0] / len(unique_labels),
+    #                     )
+    #                 except:
+    #                     metrics[form][group][metric]['F1'] = batch_f1_score(
+    #                         batch_score=metrics[form][group][metric]['domains'] / len(unique_batches),
+    #                         class_score=metrics[form][group][metric]['labels'] / len(unique_labels),
+    #                     )
+    #             elif metric == 'silhouette':
+    #                 metrics[form][group][metric]['F1'] = batch_f1_score(
+    #                     batch_score=(metrics[form][group][metric]['domains'] + 1) / 2,
+    #                     class_score=(metrics[form][group][metric]['labels'] + 1) / 2,
+    #                 )
+    #             elif metric == 'kbet':
+    #                 try:
+    #                     metrics[form][group][metric]['F1'] = batch_f1_score(
+    #                         batch_score=metrics[form][group][metric]['domains'] / len(unique_batches),
+    #                         class_score=metrics[form][group][metric]['labels'] / len(unique_labels),
+    #                     )
+    #                 except:
+    #                     pass
+    for repres in ['inputs']:
+        for metric in ['adjusted_rand_score', 'adjusted_mutual_info_score']:
+            for group in ['all']:  # , 'set'
+                try:
+                    metrics[form][group][metric]['F1'] = batch_f1_score(
+                        batch_score=metrics[form][group][metric]['domains'],
+                        class_score=metrics[form][group][metric]['labels'],
+                    )
+                except:
+                    metrics[form][group][metric]['F1'] = -1
+
+    return metrics
+
+def save_confusion_matrix(fig, name, acc, mcc, group):
+    # sns_plot = sns.heatmap(df, annot=True, square=True, cmap="YlGnBu",
+    #                        annot_kws={"size": 35 / np.sqrt(len(df))})
+    # fig = sns_plot.get_figure()
+    dirs = '/'.join(name.split('/')[:-1])
+    name = name.split('/')[-1] + '_1batch'
+    plt.title(f'Confusion Matrix (acc={np.round(np.mean(acc), 2)} +- {np.round(np.std(acc), 2)}, mcc={np.round(np.mean(mcc), 2)} +- {np.round(np.std(mcc), 2)})')
+    os.makedirs(f'{dirs}/', exist_ok=True)
+    stuck = True
+    while stuck:
+        try:
+            fig.savefig(f"{dirs}/cm_{name}_{group}.png")
+            stuck = False
+        except:
+            print('stuck...')
+    plt.close()
+
+
+def log_neptune(run, traces, best_scores):
+    '''
+    Log the scores to neptune
+    '''
+    for g in ['train', 'valid', 'test']:
+        run[f'{g}/acc'].log(traces[f'acc'][g])
+        run[f'{g}/mcc'].log(traces[f'mcc'][g])
+        try:
+            run[f'{g}/bact_acc'].log(traces[f'bact_acc'][g])
+            run[f'{g}/bact_mcc'].log(traces[f'bact_mcc'][g])
+        except:
+            pass
+        try:
+            run[f'{g}/ari'].log(best_scores[f'ari'][g])
+            run[f'{g}/ami'].log(best_scores[f'ami'][g])
+            run[f'{g}/nBE'].log(best_scores[f'nbe'][g])
+        except:
+            pass
+    if 'posurines' in traces['acc']:
+        try:
+            run[f'posurines/acc'].log(traces['acc']['posurines'])
+            run[f'posurines/mcc'].log(traces['mcc']['posurines'])
+        except:
+            pass
+

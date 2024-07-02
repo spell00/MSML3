@@ -310,7 +310,7 @@ def make_lists(dirinput, path, run_name):
     labels_list = []
     tsvs_list = []
     for _, file in enumerate(tsv_list):
-        if 'hela' in file:
+        if 'hela' in file or 'Hela' in file:
             continue
         if len(file.split('\\')) > 1:
             sample = file.split('\\')[-1].split('.')[0]
@@ -322,11 +322,12 @@ def make_lists(dirinput, path, run_name):
         batch = tmp[0]
         manip = tmp[3]
         label = tmp[2]
-        if label in ['blanc', 'Blanc', 'blk', 'Blk'] or label == 'Blanc':
+        if label in ['blanc', 'Blanc', 'blk', 'Blk', 'urinespositives'] or label == 'Blanc':
             concentration = 'NA'
+            urine = tmp[5]
         else:
-            concentration = tmp[6]
-        urine = tmp[4]
+            concentration = tmp[7]
+            urine = tmp[6]
 
         # label = f"{batch}_{'_'.join(tmp[-3:])}".lower()
         label = f"{label}_{batch}_{manip}_{urine}_{concentration}".lower()

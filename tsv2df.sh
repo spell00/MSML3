@@ -3,15 +3,15 @@ spd=200
 experiment=bacteries
 fselection=mutual_info_classif
 resources_path=resources
-for ms in 2 1
+for ms in 2
 do
-  for mz in 10 1 0.1 0.01
+  for mz in 10
   do
-    for rt in 10 1 0.1
+    for rt in 10
     do
-      for mzp in 10 1 0.1 0.01
+      for mzp in 10
       do
-        for rtp in 10 1 0.1
+        for rtp in 10
         do
           echo "mz${mz} rt${rt} mzp${mzp} rtp${rtp} ${spd}spd ms${ms} ${experiment}"
           if ! [[ -f "resources/$experiment/matrices/mz${mz}/rt${rt}/mzp${mzp}/rtp${rtp}/${spd}spd/ms${ms}" ]] &&

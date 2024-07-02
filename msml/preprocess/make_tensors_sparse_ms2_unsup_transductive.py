@@ -40,6 +40,28 @@ warnings.filterwarnings("ignore")
 logging.basicConfig(filename='make_tensors_ms2.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
 
 
+def crop_data(data, columns, args):
+    """
+    Crop the data to the min and max mz and rt values
+    :param data:
+    :param columns:
+    :param args:
+    :return:
+    """
+    mz_min = args.min_mz
+    mz_max = args.max_mz
+    rt_min = args.min_rt
+    rt_max = args.max_rt
+    rts = np.array([float(x.split("_")[1]) for x in columns])
+    mzs = np.array([float(x.split("_")[2]) for x in columns])
+    rts_to_keep = (rts >= rt_min) & (rts <= rt_max)
+    mzs_to_keep = (mzs >= mz_min) & (mzs <= mz_max)
+
+    data = data[:, rts_to_keep & mzs_to_keep]
+    columns = columns[rts_to_keep & mzs_to_keep]
+    return data, columns
+
+
 class MakeTensorsMultiprocess:
     """
     Concat
@@ -460,6 +482,10 @@ if __name__ == "__main__":
     parser.add_argument("--make_data", type=int, default=0)
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--groupkfold", type=int, default=0)
+    parser.add_argument("--min_mz", type=int, default=100)
+    parser.add_argument("--max_mz", type=int, default=1200)
+    parser.add_argument("--min_rt", type=int, default=140)
+    parser.add_argument("--max_rt", type=int, default=320)
 
     args = parser.parse_args()
     args.combat_corr = 0  # TODO to remove
@@ -517,19 +543,25 @@ if __name__ == "__main__":
                f"rtp{args.rt_bin_post}/thr{args.threshold}/{args.spd}spd/ms2/combat{args.combat_corr}/" \
                f"shift{args.shift}/{args.scaler}/log{args.log2}/{args.feature_selection}/"
     
-    batches = ['03-04-2024', '29-03-2024', '01-03-2024', '21-02-2024', '26-02-2024', '13-03-2024', '02-02-2024']
-    # batches = ['01-03-2024']
+    batches = [
+        "B14-06-10-2024", "B13-06-05-2024", "B12-05-31-2024", "B11-05-24-2024",
+        "B10-05-03-2024", "B9-04-22-2024", "B8-04-15-2024", 
+        'B7-04-03-2024', 'B6-03-29-2024', 'B5-03-13-2024', 
+        'B4-03-01-2024', 'B3-02-29-2024', 'B2-02-21-2024', 
+        'B1-02-02-2024', 
+    ]
     dir_inputs = []
-    for batch in os.listdir(f"{script_dir}/{args.resources_path}/{args.experiment}"):
+    for batch in batches:
         if batch not in batches:
-            continue
             continue
         if 'matrices' == batch or 'mzdb' == batch or 'time.txt' == batch:
             continue
         input_dir = f"{args.resources_path}/{args.experiment}/{batch}/tsv"
         dir_inputs += [f"{script_dir}/{input_dir}/mz{args.mz_bin}/rt{args.rt_bin}/{args.spd}spd/ms2/all/"]
 
-    args.run_name = f"{args.run_name}_{'-'.join(batches)}_gkf{args.groupkfold}_{args.n_splits}splits"
+    cropings = f"mz{args.min_mz}-{args.max_mz}rt{args.min_rt}-{args.max_rt}"
+
+    args.run_name = f"{args.run_name}_{'-'.join([b.split('-')[0] for b in batches])}_gkf{args.groupkfold}_{cropings}_{args.n_splits}splits"
     matrix_filename = f'{dir_name}/{args.run_name}/data_matrix_tmp.pkl'
     columns_filename = f'{dir_name}/{args.run_name}/columns.pkl'
     labels_filename = f'{dir_name}/{args.run_name}/labels.pkl'
@@ -543,6 +575,7 @@ if __name__ == "__main__":
 
         data_matrices, labels, max_mzs, max_rts, parents = [], [], [], [], []
         for dir_input in dir_inputs:
+            print(f"Processing {dir_input}")
             tmp = make_df(dir_input, dir_name, bins=bins, args_dict=args, names_to_keep=bacteria_to_keep)
             data_matrices += [tmp[0]]
             labels += [tmp[1]]
@@ -552,10 +585,13 @@ if __name__ == "__main__":
 
         labels = np.concatenate(labels)
         parents = np.unique(np.concatenate(parents))
-        max_features = {'parents': len(parents), 'max_rt': max(max_rts), 'max_mz': max(max_mzs)}
+        max_features = {
+            'parents': len(parents),
+            'max_rt': max(max_rts), 
+            'max_mz': max(max_mzs)
+        }
         rts = [np.round(rt * args.rt_bin_post, args.rt_rounding) for rt in range(max_features['max_rt'])]
         mzs = [np.round(mz * args.mz_bin_post, args.mz_rounding) for mz in range(max_features['max_mz'])]
-        # mz_min_parents = np.arange(min(min_mz_parents), max(min_mz_parents) + 1, 1)
         columns = [f"{mz_min_parent}_{rt}_{mz}" for mz_min_parent in parents for rt in rts for mz in mzs]
 
         data_matrices = adjust_tensors(data_matrices, max_features, args)
@@ -655,12 +691,10 @@ if __name__ == "__main__":
     batches = []
     pool_indices = {'indices': [], 'names': []}
     for i, sample_name in enumerate(labels):
-        # fname = file.split('\\')[-1]
         cat = sample_name.split('_')[0]
         batch = sample_name.split('_')[1]
-        # batch = "_".join([sample_name.split('_')[1], sample_name.split('_')[2]])
         cats += [cat]
-        batches += [batch]
+        batches += [batch.split('-')[0]]
         if 'pool' in sample_name:
             pool_indices['indices'] += [i]
             pool_indices['names'] += [labels[i]]
@@ -688,6 +722,8 @@ if __name__ == "__main__":
         bacteria_to_keep = [x if 'blk' not in x else 'blk' for x in bacteria_to_keep]
 
     print('\nComplete data shape', data.shape)
+
+    data, columns = crop_data(data, columns, args)
 
     fs = get_feature_selection_method(args.feature_selection)
 
