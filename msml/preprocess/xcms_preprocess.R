@@ -1,4 +1,5 @@
 # https://bioconductor.org/packages/release/bioc/vignettes/xcms/inst/doc/xcms.html
+start.time <- Sys.time()
 
 library(xcms)
 library(faahKO)
@@ -15,7 +16,7 @@ library(SummarizedExperiment)
 all_dirs <- list.dirs('resources/bacteries_2024', full.names = FALSE, recursive = FALSE)
 # Filter out the directory you want to exclude
 all_dirs <- all_dirs[!all_dirs %in% "matrices"]
-all_dirs <- c('01-03-2024', '13-03-2024')
+all_dirs <- c('01-03-2024', '13-03-2024', '02-02-2024', '21-02-2024')
 
 # Create empty list to store mzmls
 mzmls <- list()
@@ -102,4 +103,6 @@ matrix <- assay(res)
 fname <- paste0("resources/bacteries_2024/matrices/matrix_", paste(all_dirs, collapse='_'), ".csv")
 write.csv(matrix, fname)
 
-#
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+print(time.taken)
