@@ -84,9 +84,9 @@ if __name__ == '__main__':
 
     batch_dates = [
         "B14-06-10-2024", "B13-06-05-2024", "B12-05-31-2024", "B11-05-24-2024",
-        "B10-05-03-2024", "B9-04-22-2024", "B8-04-15-2024", 
-        'B7-04-03-2024', 'B6-03-29-2024', 'B5-03-13-2024', 
-        'B4-03-01-2024', 'B3-02-29-2024', 'B2-02-21-2024', 
+        "B10-05-03-2024", "B9-04-22-2024", "B8-04-15-2024",
+        'B7-04-03-2024', 'B6-03-29-2024', 'B5-03-13-2024',
+        'B4-03-01-2024', 'B3-02-29-2024', 'B2-02-21-2024',
         'B1-02-02-2024', 
     ]
     batches_to_keep = [
@@ -101,7 +101,7 @@ if __name__ == '__main__':
 
     concs = args.concs.split(',')
     cropings = f"mz{args.min_mz}-{args.max_mz}rt{args.min_rt}-{args.max_rt}"
-    exp_name = f'{"-".join(batches_to_keep)}_binary{args.binary}_{args.n_features}' \
+    args.exp_name = f'{"-".join(batches_to_keep)}_binary{args.binary}_{args.n_features}' \
                         f'_gkf{args.groupkfold}_ovr{args.ovr}_{cropings}_{"_".join(concs)}'
 
     # TODO change gkf0; only valid because using all features
@@ -145,7 +145,7 @@ if __name__ == '__main__':
     data['concs']['all'] = data['concs']['all'][mask2]
     
     path = f'results/multi/mz{args.mz}/rt{args.rt}/ms{args.ms_level}/{args.spd}spd/thr{args.threshold}/' \
-           f'{args.train_on}/{exp_name}/{args.model_name}/'
+           f'{args.train_on}/{args.exp_name}/{args.model_name}/'
 
     from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler
     from sklearn.pipeline import Pipeline

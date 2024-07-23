@@ -31,6 +31,126 @@ def read_csv(csv_file, num_rows=1000, n_cols=1000):
     data = np.stack(data)
     return pd.DataFrame(data[1:, :], columns=data[0, :])
 
+def get_data_infer(path, args, seed=42):
+    """
+
+    Args:
+        path: Path where the csvs can be loaded. The folder designated by path needs to contain at least
+                   one file named train_inputs.csv (when using --use_valid=0 and --use_test=0). When using
+                   --use_valid=1 and --use_test=1, it must also contain valid_inputs.csv and test_inputs.csv.
+
+    Returns:
+        data
+    """
+    data = {}
+    unique_labels = np.array([])
+    for info in ['inputs', 'names', 'labels', 'cats', 'batches', 'manips', 'orders', 'sets', 'urines', 'concs']:
+        data[info] = {}
+    data[info]['all'] = data[info]['test'] = data[info]['urinespositives'] = np.array([])
+    matrix = read_csv(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
+    top_features = read_csv(csv_file=f"{path}/{args.features_file}", num_rows=-1, n_cols=args.n_features)
+    names = matrix.iloc[:, 0]
+    labels = matrix.iloc[:, 1]
+
+    if args.binary:
+        labels = pd.Series(['blanc' if label=='blanc' else 'bact' for label in labels])
+
+    batches = matrix.iloc[:, 2]
+    manips = pd.Series([x.split("_")[2] for x in names])
+    urines = pd.Series([x.split("_")[3] for x in names])
+    concs = pd.Series([x.split("_")[4] if len(x.split("_")) == 5 else 'na' for x in names])
+    unique_batches = batches.unique()
+    unique_manips = manips.unique()
+    unique_urines = urines.unique()
+    unique_concs = concs.unique()
+    # batches = np.stack([np.argwhere(x == unique_batches).squeeze() for x in batches])
+    orders = np.array([0 for _ in batches])
+    matrix = matrix.iloc[:, 3:].fillna(0).astype(float)
+    # Array of colnames that are not in matrix.columns
+    cols = [x for x in top_features.iloc[:, 0].values if x not in matrix.columns]
+    # Add zero columns if they are not in matrix.columns
+    matrix = pd.concat((matrix, pd.DataFrame(np.zeros((matrix.shape[0], len(cols))), columns=cols)), 1)
+    # top_features = top_features[top_features.iloc[:, 0].isin(matrix.columns)]
+    matrix = matrix.loc[:, top_features.iloc[:, 0].values[:args.n_features]]
+    if args.remove_zeros:
+        mask1 = (matrix == 0).mean(axis=0) < 0.1
+        matrix = matrix.loc[:, mask1]
+    if args.log1p:
+        matrix.iloc[:] = np.log1p(matrix.values)
+    matrix.iloc[:] = np.nan_to_num(matrix.values)
+    # pool_pos = [i for i, name in enumerate(names.values.flatten()) if 'QC' in name]
+    pos = [i for i, name in enumerate(names.values.flatten()) if 'QC' not in name]
+
+    pos = [i for i, name in enumerate(names.values.flatten()) if 'urinespositives' in name]
+    not_pos = [i for i, name in enumerate(names.values.flatten()) if 'urinespositives' not in name]
+    data['inputs']["urinespositives"], data['inputs']['test'] = matrix.iloc[pos], matrix.iloc[not_pos]
+    data['names']["urinespositives"], data['names']['test'] = names.to_numpy()[pos], names.to_numpy()[not_pos]
+    data['labels']["urinespositives"], data['labels']['test'] = labels.to_numpy()[pos], labels.to_numpy()[not_pos]
+    data['batches']["urinespositives"], data['batches']['test'] = batches.to_numpy()[pos], batches.to_numpy()[not_pos]
+    data['manips']["urinespositives"], data['manips']['test'] = manips.to_numpy()[pos], manips.to_numpy()[not_pos]
+    data['urines']["urinespositives"], data['urines']['test'] = urines.to_numpy()[pos], urines.to_numpy()[not_pos]
+    data['concs']["urinespositives"], data['concs']['test'] = concs.to_numpy()[pos], concs.to_numpy()[not_pos]
+    data['orders']["urinespositives"], data['orders']['test'] = orders[pos], orders[not_pos]
+
+    unique_labels = np.array(np.unique(data['labels']['test']))
+    # place blancs at the end
+    blanc_class = np.argwhere(unique_labels == 'blanc').flatten()[0]
+    unique_labels = np.concatenate((np.delete(unique_labels, blanc_class), ['blanc']))
+    data['cats']['test'] = np.array(
+        [np.where(x == unique_labels)[0][0] for i, x in enumerate(data['labels']['test'])])
+
+    if args.pool:
+        pool_pos = [i for i, name in enumerate(names.values.flatten()) if 'QC' in name]
+        data['inputs'][f"test_pool"] = matrix.iloc[pool_pos]
+        data['names'][f"test_pool"] = np.array([f'pool_{i}' for i, _ in enumerate(pool_pos)])
+        data['labels'][f"test_pool"] = np.array([f'pool' for _ in pool_pos])
+        data['batches'][f"test_pool"] = batches[pool_pos]
+        data['manips'][f"test_pool"] = manips[pool_pos]
+        data['urines'][f"test_pool"] = urines[pool_pos]
+        data['concs'][f"test_pool"] = concs[pool_pos]
+
+        # This is juste to make the pipeline work. Meta should be 0 for the amide dataset
+        data['orders'][f"test_pool"] = orders[pool_pos]
+        data['cats'][f"test_pool"] = np.array(
+            [len(np.unique(data['labels']['test'])) for _ in batches[pool_pos]])
+
+        data['labels']['test'] = np.array([x.split('-')[0] for i, x in enumerate(data['labels']['test'])])
+        unique_labels = np.concatenate((unique_labels, np.array(['pool'])))
+        data['cats']['test'] = np.array(
+            [np.where(x == unique_labels)[0][0] for i, x in enumerate(data['labels']['test'])])
+
+    for key in list(data['names'].keys()):
+        data['sets'][key] = np.array([key for _ in data['names'][key]])
+    if not args.pool:
+        for key in list(data.keys()):
+            if key in ['inputs']:
+                data[key]['all'] = data[key]['test']
+            else:
+                data[key]['all'] = data[key]['test']
+        
+        unique_batches = np.unique(data['batches']['all'])
+        # for group in ['train', 'valid', 'test', 'all']:
+        #     data['batches'][group] = np.array([np.argwhere(unique_batches == x)[0][0] for x in data['batches'][group]])
+    else:
+        for key in list(data.keys()):
+            if key in ['inputs']:
+                data[key]['all'] = pd.concat((
+                    data[key]['test'], data[key]['test_pool'],
+                ), 0)
+                data[key]['all_pool'] = data[key]['test_pool']
+            else:
+                data[key]['all'] = np.concatenate((
+                    data[key]['test'], data[key]['test_pool']
+                ), 0)
+                data[key]['all_pool'] = data[key]['test_pool']
+
+        unique_batches = np.unique(data['batches']['all'])
+        # for group in ['train', 'valid', 'test', 'train_pool', 'valid_pool', 'test_pool', 'all', 'all_pool']:
+        #     data['batches'][group] = np.array([np.argwhere(unique_batches == x)[0][0] for x in data['batches'][group]])
+
+    return data, unique_labels, unique_batches, unique_manips, unique_urines, unique_concs
+
+
 def get_data(path, args, seed=42):
     """
 

@@ -429,6 +429,8 @@ def log_shap(run, ae, best_lists, cols, bins, log_path):
     # explainer = shap.KernelExplainer(svc_linear.predict_proba, X_train[:100])
     os.makedirs(log_path, exist_ok=True)
     for group in ['valid', 'test']:
+        if group not in best_lists:
+            continue
         X = best_lists[group]['inputs']
         X_test_df = pd.DataFrame(X, columns=list(cols))
 

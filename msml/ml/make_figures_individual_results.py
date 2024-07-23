@@ -82,7 +82,7 @@ def plot_bars(batch_dates, args):
                 'batches': [],
             }
         }
-        for model in ['linsvc']:
+        for model in ['xgboost']:
             path = f'results/multi/mz{args.mz}/rt{args.rt}/ms{args.ms_level}/' \
                     f'{args.spd}spd/thr{args.threshold}/{args.train_on}/{exp_name}/{model}'
             results = json.load(open(f'{path}/saved_models/best_params_inputs_{model}_values.json'))
@@ -131,7 +131,7 @@ def plot_bars(batch_dates, args):
         fig.savefig(f'{path}/figures/barplot_{name}.png')
         plt.close()
 
-        for model in ['linsvc']:
+        for model in ['xgboost']:
             new_df = df_all[df_all["models"].str.contains(model)]
             sns.set(rc={'figure.figsize':(12, 8)})
             sns.set_style(style='whitegrid') 
@@ -207,7 +207,7 @@ def plot_individual_bars(batch_dates, args):
                 'batches': [],
             }
         }
-        for model in ['linsvc']:
+        for model in ['xgboost']:
             for date in batch_dates:
                 date = date.split('-')[0]
                 if args.output != '2models':
@@ -240,7 +240,7 @@ def plot_individual_bars(batch_dates, args):
 
                 df = pd.DataFrame(df)
                 df_all2 = make_df_classes(df_all)
-                for model in ['linsvc']:
+                for model in ['xgboost']:
                     new_df = df[df["models"].str.contains(model)]
                     sns.set(rc={'figure.figsize':(12, 8)})
                     sns.set_style(style='whitegrid') 
@@ -343,7 +343,7 @@ if __name__ == '__main__':
     parser.add_argument('--groupkfold', type=int, default=1)
     parser.add_argument('--n_features', type=int, default=-1)
     parser.add_argument('--binary', type=int, default=0)
-    parser.add_argument('--model_name', type=str, default='linsvc')
+    parser.add_argument('--model_name', type=str, default='xgboost')
     parser.add_argument('--train_on', type=str, default='all')
     parser.add_argument('--csv_file', type=str, default='inputs.csv')
     parser.add_argument('--ovr', type=int, default=1)
@@ -369,11 +369,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     batch_dates = [
-        'B10-05-03-2024',
-        'B1-02-02-2024', 'B2-02-21-2024', 'B3-02-29-2024', 
-        'B4-03-01-2024', 'B5-03-13-2024', 'B6-03-29-2024',
-        'B7-04-03-2024', "B8-04-15-2024", "B9-04-22-2024",
+        "B14-06-10-2024", "B13-06-05-2024", "B12-05-31-2024", "B11-05-24-2024",
+        "B10-05-03-2024", "B9-04-22-2024", "B8-04-15-2024",
+        'B7-04-03-2024', 'B6-03-29-2024', 'B5-03-13-2024',
+        'B4-03-01-2024', 'B3-02-29-2024', 'B2-02-21-2024',
+        'B1-02-02-2024', 
     ]
     plot_bars(batch_dates, args)
-    plot_individual_bars(batch_dates, args)
+    # plot_individual_bars(batch_dates, args)
     

@@ -175,7 +175,7 @@ def process_sparse_data(data, cats, columns, model, dirname, args):
     )
 
 
-def process_sparse_data_supervised(data, cats, batches, columns, model, dirname, args):
+def process_sparse_data_supervised(data, cats, batches, columns, model, dirname, args, inference=False):
     # TODO POOLS HANDLING
     if args.k == -1:
         args.k = data.shape[1]
@@ -194,7 +194,8 @@ def process_sparse_data_supervised(data, cats, batches, columns, model, dirname,
     #     data['test'] = data['test'][data['test'].columns[not_zeros_cols]]
 
     # assert all columns with only 0s are removed
-    assert len([i for i in range(datasum.shape[1]) if datasum[0, i] == 0]) == 0
+    if not inference:
+        assert len([i for i in range(datasum.shape[1]) if datasum[0, i] == 0]) == 0
     # data.to_csv('train_df.csv')
     features_scores = [None for _ in range(args.n_splits)]
 

@@ -564,6 +564,7 @@ if __name__ == "__main__":
     args.run_name = f"{args.run_name}_{'-'.join([b.split('-')[0] for b in batches])}_gkf{args.groupkfold}_{cropings}_{args.n_splits}splits"
     matrix_filename = f'{dir_name}/{args.run_name}/data_matrix_tmp.pkl'
     columns_filename = f'{dir_name}/{args.run_name}/columns.pkl'
+    columns_filename_no_zeros = f'{dir_name}/{args.run_name}/columns_nozeros.pkl'
     labels_filename = f'{dir_name}/{args.run_name}/labels.pkl'
     bacteria_to_keep = None
 
@@ -724,6 +725,8 @@ if __name__ == "__main__":
     print('\nComplete data shape', data.shape)
 
     data, columns = crop_data(data, columns, args)
+    dump(columns, open(f'{columns_filename}_nozeros', 'wb'))
+    # Save columns
 
     fs = get_feature_selection_method(args.feature_selection)
 
