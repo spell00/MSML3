@@ -8,7 +8,7 @@ for experiment in 'B15-06-29-2024'
 do
   for ms in 2
   do
-    for mz in 10 0.1
+    for mz in 10
     do
       for rt in 10
       do
@@ -30,4 +30,3 @@ do
     done
   done
 done
-

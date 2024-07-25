@@ -23,11 +23,29 @@ import fr.profi.mzdb._
 @main
 def main(path: os.Path, mzBinSize: String = "0.01", rtBinSize: String = "10"): Unit = {
 
+  val startTime = System.nanoTime()
   val inputFile = path.toIO
   val inputNameHead = inputFile.getName.split('.').head.toLowerCase()
   val msnOutputFile = new File ( s"${inputNameHead}.tsv")
 
   create_dia_histogram(inputFile, msnOutputFile, mzBinSize.toFloat, rtBinSize.toFloat)
+
+  val endTime = System.nanoTime()
+  val duration = (endTime - startTime) / 1e9 // Convert to seconds
+  val inFileSize = inputFile.length() / (1024.0 * 1024.0) // Convert to MB
+  val outFileSize = msnOutputFile.length() / (1024.0 * 1024.0) // Convert to MB
+
+  val csvOutputFile = new File("processing_times.csv")
+  val csvWriter = new PrintWriter(new java.io.FileWriter(csvOutputFile, true))
+  
+  // Write header if the file is empty
+  if (csvOutputFile.length() == 0) {
+    csvWriter.println("filename,time(s),input size(Mb),output size(Mb)")
+  }
+  
+  csvWriter.println(s"${msnOutputFile.getName},$duration,$inFileSize,$outFileSize")
+  csvWriter.close()
+
 }
 
 def create_dia_histogram(mzDbFile: File, outputFile: File, mzBinSize: Float, rtBinSize: Float) {
