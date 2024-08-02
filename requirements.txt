@@ -1,0 +1,16 @@
+matplotlib
+scikit-learn
+scikit-optimize
+xgboost
+seaborn
+tqdm
+neptune
+mlflow
+rpy2
+umap-learn
+tabulate
+shapely
+statsmodels
+shap
+scipy
+msalign

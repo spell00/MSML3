@@ -11,7 +11,7 @@ start_time = datetime.now()
 # import re
 import os
 import time
-# import scipy
+import csv
 import logging
 import multiprocessing
 from multiprocessing import set_start_method
@@ -36,10 +36,13 @@ from msalign import msalign
 from functools import reduce
 from sklearn.preprocessing import minmax_scale as scale
 from scipy import sparse
+# import copyfile
+from shutil import copyfile
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(filename='make_tensors_ms2.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
 
+GLOBAL_TIMES = csv.writer(open('global_times.csv', 'w'))
 
 def crop_data(data, columns, args):
     """
@@ -75,8 +78,14 @@ class MakeTensorsMultiprocess:
         :param test_run:
         :return:
         """
-        os.makedirs(f'{path}/images', exist_ok=True)
-        os.makedirs(f'{path}/csv', exist_ok=True)
+
+        # Starts a csv file to record the time it takes to process each file
+        with open(f'{path}/{args.exp_name}/time.csv', 'w', newline='', encoding='utf-8') as f:
+            csv_writer = csv.writer(f)
+            csv_writer.writerow(['File', 'Time', 'input_size(MB)', 'output_size(MB)'])
+
+        os.makedirs(f'{path}/{args.exp_name}/images', exist_ok=True)
+        os.makedirs(f'{path}/{args.exp_name}/csv', exist_ok=True)
 
         self.bins = bins
         self.is_sparse = args.is_sparse
@@ -94,6 +103,7 @@ class MakeTensorsMultiprocess:
         if args.n_samples != -1:
             self.tsv_list = self.tsv_list[:args.n_samples]
             self.labels_list = self.labels_list[:args.n_samples]
+        self.args = args
 
     def process(self, index):
         """
@@ -111,6 +121,7 @@ class MakeTensorsMultiprocess:
         try:
             tsv = pd.read_csv(file, header=0, sep='\t')
             tsv = tsv.astype({c: np.float32 for c in tsv.select_dtypes(include='float64').columns})
+            tsv_size = tsv.memory_usage().sum() / 2 ** 20
         except:
             exit('Error reading csv')
         print(
@@ -238,10 +249,17 @@ class MakeTensorsMultiprocess:
         # for x in list(final.keys()):
         #     final[x] = csc_matrix(final[x])
         total_memory = np.sum([final[x].memory_usage().sum() for x in list(final.keys())]) / 2 ** 20
-        total_time = (time.time() - startTime) / 60
+        total_time = (time.time() - startTime)
+        # Round to 2 decimals
+        total_memory = np.round(total_memory, 2)
+        total_time = np.round(total_time, 2)
+        tsv_size = np.round(tsv_size, 2)
         print(
-            f"Finished file {index}. Total memory: {np.round(total_memory, 2)}  MB, time: {np.round(total_time, 2)} minutes")
-        # print(len(gc.get_objects()))
+            f"Finished file {index}. Total memory: {total_memory}  MB, time: {total_time} seconds")
+        csv_file = f'{self.path}/{self.args.exp_name}/time.csv'
+        with open(csv_file, 'a', newline='', encoding='utf-8') as f:
+            csv_writer = csv.writer(f)
+            csv_writer.writerow([label, total_time, tsv_size, total_memory])
         return final, list(final.keys()), label
 
     def n_samples(self):
@@ -251,20 +269,20 @@ class MakeTensorsMultiprocess:
         return len(self.tsv_list)
 
     def save_images_and_csv3d(self, final, df, label, i):
-        os.makedirs(f"{self.path}/csv3d/{label}/", exist_ok=True)
-        os.makedirs(f"{self.path}/images3d/{label}/", exist_ok=True)
-        final.to_csv(f"{self.path}/csv3d/{label}/{label}_{i}.csv", index_label='ID')
+        os.makedirs(f"{self.path}/{args.exp_name}/csv3d/{label}/", exist_ok=True)
+        os.makedirs(f"{self.path}/{args.exp_name}/images3d/{label}/", exist_ok=True)
+        final.to_csv(f"{self.path}/{args.exp_name}/csv3d/{label}/{label}_{i}.csv", index_label='ID')
         im = Image.fromarray(np.uint8(cm.gist_earth(df) * 255))
-        im.save(f"{self.path}/images3d/{label}/{label}_{i}.png")
+        im.save(f"{self.path}/{args.exp_name}/images3d/{label}/{label}_{i}.png")
         im.close()
         del im
 
     def save_images_and_csv(self, final, df, label):
-        os.makedirs(f"{self.path}/csv/", exist_ok=True)
-        os.makedirs(f"{self.path}/images/", exist_ok=True)
-        final.to_csv(f"{self.path}/csv/{label}.csv", index_label='ID')
+        os.makedirs(f"{self.path}/{args.exp_name}/csv/", exist_ok=True)
+        os.makedirs(f"{self.path}/{args.exp_name}/images/", exist_ok=True)
+        final.to_csv(f"{self.path}/{args.exp_name}/csv/{label}.csv", index_label='ID')
         im = Image.fromarray(np.uint8(cm.gist_earth(df) * 255))
-        im.save(f"{self.path}/images/{label}.png")
+        im.save(f"{self.path}/{args.exp_name}/images/{label}.png")
         im.close()
         del im
 
@@ -343,6 +361,9 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
         lists["tsv"] = np.array(lists['tsv'])[inds_to_keep].tolist()
         lists["labels"] = np.array(lists['labels'])[inds_to_keep].tolist()
     concat = MakeTensorsMultiprocess(lists["tsv"], lists["labels"], bins, dirname, args_dict)
+
+    # Start a timer to record the time it takes to process the rest of the script
+    timer_adustments = time.time()
 
     if args_dict.n_cpus < 1:
         n_cpus = multiprocessing.cpu_count() + args_dict.n_cpus
@@ -437,6 +458,10 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
     mzs = [np.round(mz * args_dict.mz_bin_post, args_dict.mz_rounding) - mz_shift for mz in range(max_mz)]
     rts = [np.round(rt * args_dict.rt_bin_post, args_dict.rt_rounding) - rt_shift for rt in range(max_rt)]
     mz_min_parents = np.arange(min(parents), max(parents) + diff_parents, diff_parents)
+
+    # Calculate time for the adjustments in seconds
+    timer_adustments = time.time() - timer_adustments
+    # GLOBAL_TIMES.writerow(['Adjustments', timer_adustments])
 
     return matrices, new_labels, [f"{mz_min_parent}_{rt}_{mz}" for mz_min_parent in mz_min_parents for rt in rts for mz
                                    in mzs], {'parents': parents, 'max_rt': max_rt, 'max_mz': max_mz}
@@ -573,13 +598,20 @@ if __name__ == "__main__":
         data_matrices, labels, max_mzs, max_rts, parents = [], [], [], [], []
         for dir_input in dir_inputs:
             print(f"Processing {dir_input}")
+            # Start a timer to record the time it takes to process one df
+            timer_df = time.time()
             tmp = make_df(dir_input, dir_name, bins=bins, args_dict=args, names_to_keep=bacteria_to_keep)
             data_matrices += [tmp[0]]
             labels += [tmp[1]]
             max_mzs += [tmp[3]['max_mz']]
             max_rts += [tmp[3]['max_rt']]
             parents += [tmp[3]['parents']]
+            # Calculate time for make_df in seconds
+            timer_df = time.time() - timer_df
+            GLOBAL_TIMES.writerow([dir_input, timer_df])
 
+        # Adjustements timer
+        timer_adustments = time.time()
         labels = np.concatenate(labels)
         parents = np.unique(np.concatenate(parents))
         max_features = {
@@ -611,10 +643,11 @@ if __name__ == "__main__":
         data_matrix = load(open(matrix_filename, 'rb'))
         columns = load(open(columns_filename, 'rb'))
         labels = load(open(labels_filename, 'rb'))
-    print("Finding not zeros only columns...")
+    
     print('\nComplete data shape', data_matrix.shape)
-
-
+    # Timer
+    timer_adustments = time.time() - timer_adustments
+    GLOBAL_TIMES.writerow(['Adjustments', timer_adustments])
     # columns = new_columns
     if args.log2 == 'after':
         print("Logging the data...")
@@ -681,25 +714,36 @@ if __name__ == "__main__":
 
     print('\nComplete data shape', data.shape)
 
-    # data, columns = crop_data(data, columns, args)
-
-    fs = get_feature_selection_method(args.feature_selection)
-
-    print(f"Calculating {args.feature_selection}\n")
-    if args.feature_selection == 'variance':
-        process_sparse_data(data, cats, columns, model=fs, dirname=dir_name, args=args)
+    # Time reordering of features
+    ordering_timer = time.time()
+    args.mutual_info_path = f'{dir_name}/{args.exp_name}/{args.feature_selection}_scores.csv'
+    if args.feature_selection != 'none':
+        if args.k > -1:
+            features = pd.read_csv(args.mutual_info_path)['minp_maxp_rt_mz'].to_numpy()[:args.k]
+        else:
+            features = pd.read_csv(args.mutual_info_path)['minp_maxp_rt_mz'].to_numpy()
     else:
-        process_sparse_data_supervised(data, cats, batches, columns, model=fs, dirname=dir_name, args=args, inference=True)
-
-    args.mutual_info_path = f'{dir_name}/{args.run_name}/{args.feature_selection}_scores.csv'
-    if args.k > -1:
-        features = pd.read_csv(args.mutual_info_path)['minp_maxp_rt_mz'].to_numpy()[:args.k]
-    else:
-        features = pd.read_csv(args.mutual_info_path)['minp_maxp_rt_mz'].to_numpy()
+        features = load(open(columns_filename, 'rb'))
+    copyfile(args.mutual_info_path, f'{dir_name}/{args.run_name}/{args.feature_selection}_scores.csv')
+    # Copy columns_filename from exp_name to run_name
+    copyfile(columns_filename, f'{dir_name}/{args.run_name}/columns_nozeros.pkl')
 
     feats_pos = [np.argwhere(x==columns)[0][0] for x in features if x in columns]
-    data = data[:, feats_pos]
-    pool_data = pool_data[:, feats_pos]
+    # Save the feats_pos if file not exist yet, else load it
+    if not os.path.exists(f'{dir_name}/{args.exp_name}/feats_pos.pkl'):
+        dump(feats_pos, open(f'{dir_name}/{args.run_name}/feats_pos.pkl', 'wb'))
+    else:
+        feats_pos = load(open(f'{dir_name}/{args.run_name}/feats_pos.pkl', 'rb'))
+    # Find all the columns that are not in the features
+    feats_absent = [x for x in columns if x not in features]
+    # Make an array of zeros to add to the data
+    zeros = csc_matrix(np.zeros((data.shape[0], len(feats_absent))))
+    # Add the zeros to the data
+    data = hstack([data, zeros])
+    pool_data = hstack([pool_data, zeros])
+    # Add the absent features to the columns
+    data = data.todense()[:, feats_pos]
+    pool_data = pool_data.todense()[:, feats_pos]
 
     # Round values to 2 decimals
     data = np.round(np.nan_to_num(data), 2)
@@ -707,7 +751,10 @@ if __name__ == "__main__":
         pool_data = np.round(np.nan_to_num(pool_data), 2)
     except:
         pass
-
+    ordering_timer = time.time() - ordering_timer
+    GLOBAL_TIMES.writerow(['Reordering', ordering_timer])
+    # Timer to save files
+    save_time = time.time()
     # Make dataframes for BERNN
     # First column: sample IDs
     # Second column: labels
@@ -718,21 +765,23 @@ if __name__ == "__main__":
     infos = pd.concat([pd.DataFrame(cats), pd.DataFrame(batches)], axis=1)
     infos.index = labels
     infos.columns = ['label', 'batch']
-    data = pd.concat([infos, pd.DataFrame(data.toarray(), index=labels, columns=features)], axis=1)
+    data = pd.concat([infos, pd.DataFrame(data, index=labels, columns=features)], axis=1)
     pool_infos = pd.concat([pd.DataFrame(pool_cats), pd.DataFrame(pool_batches)], axis=1)
     pool_infos.index = pool_labels
     if len(pool_infos.index) > 0:
         pool_infos.columns = ['label', 'batch']
-    pool_data = pd.concat([pool_infos, pd.DataFrame(pool_data.toarray(), index=pool_labels, columns=features)], axis=1)
+        pool_data = pd.concat([pool_infos, pd.DataFrame(pool_data, index=pool_labels, columns=features)], axis=1)
+        pool_data.to_csv(
+            f'{dir_name}/{args.run_name}/pool_inputs_{args.feature_selection}.csv',
+            index=True, index_label='ID')
 
     batches = '-'.join([b.split('-')[0] for b in np.unique(batches)])
-    os.makedirs(f'{dir_name}/{args.run_name}_inference', exist_ok=True)
     data.to_csv(
-        f'{dir_name}/{args.run_name}_inference/inputs.csv',
+        f'{dir_name}/{args.run_name}/inputs_{args.feature_selection}.csv',
         index=True, index_label='ID'
     )
-    pool_data.to_csv(
-        f'{dir_name}/{args.run_name}_inference/pool_inputs.csv',
-        index=True, index_label='ID')
-    print('Duration: {}'.format(datetime.now() - start_time))
+    save_time = time.time() - save_time
+    GLOBAL_TIMES.writerow(['Save files', save_time])
+    print('Total Duration: {}'.format(datetime.now() - start_time))
+    GLOBAL_TIMES.writerow(['Total Duration', datetime.now() - start_time])
 

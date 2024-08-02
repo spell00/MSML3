@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 def analyze_directory(directory, file_type):
     # Collect file information
@@ -20,7 +21,7 @@ def analyze_directory(directory, file_type):
     avg_size = df['Size (MB)'].mean()
     largest_file = df.loc[df['Size (MB)'].idxmax()]
     smallest_file = df.loc[df['Size (MB)'].idxmin()]
-    
+
     # Print basic statistics
     print(f'--- {file_type} ---')
     print(f'Total number of files: {total_files}')
@@ -28,17 +29,91 @@ def analyze_directory(directory, file_type):
     print(f'Average file size: {avg_size:.2f} MB')
     print(f'Largest file: {largest_file["Filename"]} ({largest_file["Size (MB)"]:.2f} MB)')
     print(f'Smallest file: {smallest_file["Filename"]} ({smallest_file["Size (MB)"]:.2f} MB)')
-    
+
     # Plot histogram of file sizes
     plt.figure(figsize=(10, 6))
     plt.hist(df['Size (MB)'], bins=50, color='blue', edgecolor='black')
     plt.title(f'Histogram of File Sizes for {file_type}')
     plt.xlabel('File Size (MB)')
     plt.ylabel('Number of Files')
-    plt.grid(True)
     os.makedirs(f"{directory}/summary/{file_type}", exist_ok=True)
     plt.savefig(f"{directory}/summary/{file_type}/hist.png")
     plt.close()
+
+    # Plot boxplot of file sizes
+    # Boxplot is useful for visualizing the spread and skewness of the data
+    # Use seaborn for a more visually appealing boxplot
+    plt.figure(figsize=(10, 6))
+    sns.boxplot(x=df['Size (MB)'], color='orange')
+    plt.title(f'Boxplot of File Sizes for {file_type}')
+    plt.xlabel('File Size (MB)')
+    plt.savefig(f"{directory}/summary/{file_type}/boxplot.png")
+    plt.close()
+
+
+def analyze_processing_time(directory, file_type='raw'):
+    if file_type == 'raw':
+        df = pd.read_csv(f'{directory}/processing_times_raw.log')
+        # Remove rows with missing values
+        df = df.dropna()
+        # Drop rows with processing time less than 0
+        df = df[df['duration(s)'] >= 0]
+
+        total_processing_time = df['duration(s)'].sum()
+        avg_processing_time = df['duration(s)'].mean()
+        largest_processing_time = df.loc[df['duration(s)'].idxmax()]
+        smallest_processing_time = df.loc[df['duration(s)'].idxmin()]
+        colname = 'duration(s)'
+    elif file_type == 'mzdb/200spd':
+        df = pd.read_csv(f'msml/mzdb2tsv/processing_times.csv')
+        # Remove rows with missing values
+        df = df.dropna()
+        # Drop rows with processing time less than 0
+        df = df[df['time(s)'] >= 0]
+
+        total_processing_time = df['time(s)'].sum()
+        avg_processing_time = df['time(s)'].mean()
+        largest_processing_time = df.loc[df['time(s)'].idxmax()]
+        smallest_processing_time = df.loc[df['time(s)'].idxmin()]
+        colname = 'time(s)'
+    elif file_type.__contains__('tsv'):
+        df = pd.read_csv(f'msml/mzdb2tsv/processing_times.csv')
+        # Remove rows with missing values
+        df = df.dropna()
+        # Drop rows with processing time less than 0
+        df = df[df['time(s)'] >= 0]
+
+        total_processing_time = df['time(s)'].sum()
+        avg_processing_time = df['time(s)'].mean()
+        largest_processing_time = df.loc[df['time(s)'].idxmax()]
+        smallest_processing_time = df.loc[df['time(s)'].idxmin()]
+        colname = 'time(s)'
+    else:
+        raise ValueError('Invalid file type. Please choose from: raw, mzdb/200spd, tsv/mz10/rt10/200spd/ms2/all, tsv/mz0.1/rt10/200spd/ms2/all')
+
+    print(f'Total processing time: {total_processing_time:.2f} s')
+    print(f'Average processing time: {avg_processing_time:.2f} s')
+    print(f'Largest processing time: {largest_processing_time[colname]} ({largest_processing_time[colname]:.2f} s)')
+    print(f'Smallest processing time: {smallest_processing_time[colname]} ({smallest_processing_time[colname]:.2f} s)')
+    
+
+    # Plot histogram of processing times
+    plt.figure(figsize=(10, 6))
+    plt.hist(df[colname], bins=50, color='green', edgecolor='black')
+    plt.title(f'Histogram of Processing Times for {file_type}')
+    plt.xlabel('Processing Time (s)')
+    plt.ylabel('Number of Files')
+    plt.savefig(f"{directory}/summary/{file_type}/processing_time_hist.png")
+    plt.close()
+
+    # Plot boxplot of processing times
+    plt.figure(figsize=(10, 6))
+    sns.boxplot(x=df[colname], color='red')
+    plt.title(f'Boxplot of Processing Times for {file_type}')
+    plt.xlabel('Processing Time (s)')
+    plt.savefig(f"{directory}/summary/{file_type}/processing_time_boxplot.png")
+    plt.close()
+
 
 # Replace 'your_directory_path' with the actual path to the directory you want to analyze
 directory_path = 'resources/bacteries_2024/B15-06-29-2024'
@@ -47,6 +122,9 @@ file_types = ['raw', 'mzdb/200spd', 'tsv/mz10/rt10/200spd/ms2/all', 'tsv/mz0.1/r
 
 for file_type in file_types:
     analyze_directory(directory_path, file_type)
+    analyze_processing_time(directory_path, file_type)
+    
+analyze_processing_time(directory_path)
 
 tsv2df_path = f'resources/bacteries_2024/matrices/mz10/rt10/thr0.0/'\
                 f'200spd/ms2/combat0/shift0/none/loginloop/mutual_info_classif/all'\
