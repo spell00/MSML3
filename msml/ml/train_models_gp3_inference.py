@@ -7,23 +7,23 @@ NEPTUNE_PROJECT_NAME = "MSML-Bacteria"
 NEPTUNE_MODEL_NAME = 'MSMLBAC-'
 import numpy as np
 import random
-import sklearn.neighbors
-import torch
+# import sklearn.neighbors
+# import torch
 import sklearn
 import os
-import xgboost
-from sklearn.naive_bayes import GaussianNB
+# import xgboost
+# from sklearn.naive_bayes import GaussianNB
 
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
+# from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 
 import warnings
-from skopt.space import Real, Integer, Categorical
-from sklearn.ensemble import RandomForestClassifier
+# from skopt.space import Real, Integer, Categorical
+# from sklearn.ensemble import RandomForestClassifier
 
 warnings.filterwarnings("ignore")
 
 random.seed(42)
-torch.manual_seed(42)
+# torch.manual_seed(42)
 np.random.seed(42)
 
 from skopt import gp_minimize
@@ -35,7 +35,7 @@ if __name__ == '__main__':
     # Load data
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--features_file', type=str, default='mutual_info_classif_scores.csv')
+    parser.add_argument('--features_file', type=str, default='none_scores.csv')
     # parser.add_argument('--remove_zeros', type=int, default=0)
     parser.add_argument('--log1p', type=int, default=0)
     parser.add_argument('--zinb', type=int, default=0)
@@ -45,7 +45,7 @@ if __name__ == '__main__':
     parser.add_argument('--binary', type=int, default=0)
     parser.add_argument('--model_name', type=str, default='linsvc')
     parser.add_argument('--train_on', type=str, default='all')
-    parser.add_argument('--csv_file', type=str, default='inputs.csv')
+    parser.add_argument('--csv_file', type=str, default='inputs_none.csv')
     parser.add_argument('--ovr', type=int, default=1)
     parser.add_argument('--mz', type=int, default=10)
     parser.add_argument('--rt', type=int, default=10)
@@ -57,16 +57,19 @@ if __name__ == '__main__':
     parser.add_argument('--combat', type=int, default=0)  # TODO not using this anymore
     parser.add_argument('--shift', type=int, default=0)  # TODO keep this?
     parser.add_argument('--log', type=str, default='inloop')
-    parser.add_argument('--features_selection', type=str, default='mutual_info_classif')
+    parser.add_argument('--features_selection', type=str, default='none')
     parser.add_argument('--concs', type=str, default='na,h')
     parser.add_argument('--n_repeats', type=int, default=5)
     parser.add_argument("--min_mz", type=int, default=0)
     parser.add_argument("--max_mz", type=int, default=10000)
     parser.add_argument("--min_rt", type=int, default=0)
     parser.add_argument("--max_rt", type=int, default=1000)
+    parser.add_argument("--low_ram", type=int, default=0)
+    parser.add_argument("--n_splits", type=int, default=5)
+    parser.add_argument("--train_batches", type=str, default='b14-b13-b12-b11-b10-b9-b8-b7-b6-b5-b4-b3-b2-b1')
     args = parser.parse_args()
 
-    args.model_name = f"{args.model_name}_inference"
+    args.model_name = f"{args.model_name}"
 
     if args.mz < 1:
         args.mz_rounding = len(str(args.mz).split('.')[-1]) + 1
@@ -98,15 +101,17 @@ if __name__ == '__main__':
 
     concs = args.concs.split(',')
     cropings = f"mz{args.min_mz}-{args.max_mz}rt{args.min_rt}-{args.max_rt}"
-    args.exp_name = f'{"-".join(batches_to_keep)}_binary{args.binary}_{args.n_features}' \
-                        f'_gkf{args.groupkfold}_ovr{args.ovr}_{cropings}_{"_".join(concs)}'
 
-    # TODO change gkf0; only valid because using all features
-    exp = f'all_{"-".join(batch_dates)}_gkf0_{cropings}_5splits'  
+    # TODO change gkf0; only valid because using all features    
+    args.exp_name = f'results/multi/mz{args.mz}/rt{args.rt}/' \
+        f'ms{args.ms_level}/{args.spd}spd/thr{args.threshold}/' \
+        f'{args.train_on}/{args.train_batches}_binary{args.binary}_{args.n_features}_' \
+        f'gkf0_ovr{args.ovr}_{cropings}_{"_".join(concs)}/xgboost/saved_models/'
+    exp = f'all_{"-".join(batch_dates)}_gkf{args.groupkfold}_{cropings}_5splits'  
     path = f'resources/bacteries_2024/matrices/mz{args.mz}/rt{args.rt}/' \
         f'mzp{args.mzp}/rtp{args.rtp}/thr{args.threshold}/{args.spd}spd/' \
         f'ms{args.ms_level}/combat{args.combat}/shift{args.shift}/none/' \
-        f'log{args.log}/{args.features_selection}/{exp}_inference/'
+        f'log{args.log}/{args.features_selection}/{exp}'
 
     data, unique_labels, unique_batches, unique_manips, \
                         unique_urines, unique_concs = get_data_infer(path, args)
@@ -154,10 +159,10 @@ if __name__ == '__main__':
     robust_minmax_scaler = Pipeline([('robust', RobustScaler()),
                                      ('minmax', MinMaxScaler())])
     import joblib
-    models = [joblib.load(f'{path}{x}') for x in os.listdir(path) if x.endswith('.pkl')]
+    models = [joblib.load(f'{args.exp_name}/{args.model_name}_minmax2_{i}.pkl') for i in [0, 1, 2, 3, 4]]
     names = [x.split('.')[0] for x in os.listdir(path) if x.endswith('.pkl')]
     args.path = path
-    args.scaler_name = names[0].split('_')[-2]
+    args.scaler_name = 'minmax2'  # changer pour que ce soit automatique
     infer = Infer(name="inputs", model=models, data=data, uniques=uniques,
                   log_path=path, args=args, logger=None,
                   log_neptune=True, mlops='None')

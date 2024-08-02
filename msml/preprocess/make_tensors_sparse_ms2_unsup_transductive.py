@@ -237,9 +237,9 @@ class MakeTensorsMultiprocess:
         # for x in list(final.keys()):
         #     final[x] = csc_matrix(final[x])
         total_memory = np.sum([final[x].memory_usage().sum() for x in list(final.keys())]) / 2 ** 20
-        total_time = (time.time() - startTime) / 60
+        total_time = (time.time() - startTime)
         print(
-            f"Finished file {index}. Total memory: {np.round(total_memory, 2)}  MB, time: {np.round(total_time, 2)} minutes")
+            f"Finished file {index}. Total memory: {np.round(total_memory, 2)}  MB, time: {np.round(total_time, 2)} seconds")
         # print(len(gc.get_objects()))
         return final, list(final.keys()), label
 
@@ -616,7 +616,8 @@ if __name__ == "__main__":
     print("Finding not zeros only columns...")
     print('\nComplete data shape', data_matrix.shape)
 
-    # TODO only pass and return a list of list of columns. data_matrix could be seperated without taking more space
+    # TODO only pass and return a list of list of columns. 
+    # TODO data_matrix could be seperated without taking more space
     # TODO now the space doubles here
     dframe_list = split_sparse(data_matrix, cols_per_split=int(1e5), columns=columns)
 
@@ -725,26 +726,35 @@ if __name__ == "__main__":
     print('\nComplete data shape', data.shape)
 
     data, columns = crop_data(data, columns, args)
-    dump(columns, open(f'{columns_filename}_nozeros', 'wb'))
+    dump(columns, open(columns_filename_no_zeros, 'wb'))
     # Save columns
 
-    fs = get_feature_selection_method(args.feature_selection)
-
-    print(f"Calculating {args.feature_selection}\n")
-    if args.feature_selection == 'variance':
-        process_sparse_data(data, cats, columns, model=fs, dirname=dir_name, args=args)
-    else:
-        process_sparse_data_supervised(data, cats, batches, columns, model=fs, dirname=dir_name, args=args)
-
     args.mutual_info_path = f'{dir_name}/{args.run_name}/{args.feature_selection}_scores.csv'
-    if args.k > -1:
-        features = pd.read_csv(args.mutual_info_path)['minp_maxp_rt_mz'].to_numpy()[:args.k]
-    else:
-        features = pd.read_csv(args.mutual_info_path)['minp_maxp_rt_mz'].to_numpy()
+    if args.feature_selection != 'none':
+        fs = get_feature_selection_method(args.feature_selection)
 
-    feats_pos = [np.argwhere(x==columns)[0][0] for x in features if x in columns]
-    data = data[:, feats_pos]
-    pool_data = pool_data[:, feats_pos]
+        print(f"Calculating {args.feature_selection}\n")
+        if args.feature_selection == 'variance':
+            process_sparse_data(data, cats, columns, model=fs, dirname=dir_name, args=args)
+        else:
+            process_sparse_data_supervised(data, cats, batches, columns, model=fs, dirname=dir_name, args=args)
+
+        if args.k > -1:
+            features = pd.read_csv(args.mutual_info_path)['minp_maxp_rt_mz'].to_numpy()[:args.k]
+        else:
+            features = pd.read_csv(args.mutual_info_path)['minp_maxp_rt_mz'].to_numpy()
+
+        feats_pos = [np.argwhere(x==columns)[0][0] for x in features if x in columns]
+        data = data[:, feats_pos]
+        pool_data = pool_data[:, feats_pos]
+    else:
+        features = pd.DataFrame(np.zeros(len(columns)), index=columns, columns=['minp_maxp_rt_mz'])
+        # Save features to args.mutual_info_path
+        features.to_csv(
+            args.mutual_info_path,
+            index_label='minp_maxp_rt_mz'
+        )
+        features = features.index
 
     # Round values to 2 decimals
     data = np.round(np.nan_to_num(data), 2)
@@ -765,13 +775,14 @@ if __name__ == "__main__":
     pool_infos.index = pool_labels
     if len(pool_infos.index) > 0:
         pool_infos.columns = ['label', 'batch']
-    pool_data = pd.concat([pool_infos, pd.DataFrame(pool_data.toarray(), index=pool_labels, columns=features)], axis=1)
+        pool_data = pd.concat([pool_infos, pd.DataFrame(pool_data.toarray(), index=pool_labels, columns=features)], axis=1)
+        pool_data.to_csv(
+            f'{dir_name}/{args.run_name}/pool_inputs_{args.feature_selection}.csv',
+            index=True, index_label='ID')
 
+    # TODO CHANGE FOR PICKLE?
     data.to_csv(
-        f'{dir_name}/{args.run_name}/inputs.csv',
-        index=True, index_label='ID')
-    pool_data.to_csv(
-        f'{dir_name}/{args.run_name}/pool_inputs.csv',
+        f'{dir_name}/{args.run_name}/inputs_{args.feature_selection}.csv',
         index=True, index_label='ID')
     print('Duration: {}'.format(datetime.now() - start_time))
 

@@ -5,19 +5,19 @@ import itertools
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler, Normalizer
 from sklearn.pipeline import Pipeline
-import torch
+# import torch
 
-def to_categorical(y, num_classes):
-    """
-    1-hot encodes a tensor
-    Args:
-        y: values to encode
-        num_classes: Number of classes. Length of the 1-encoder
-
-    Returns:
-        Tensor corresponding to the one-hot encoded classes
-    """
-    return torch.eye(num_classes, dtype=torch.int)[y]
+# def to_categorical(y, num_classes):
+#     """
+#     1-hot encodes a tensor
+#     Args:
+#         y: values to encode
+#         num_classes: Number of classes. Length of the 1-encoder
+# 
+#     Returns:
+#         Tensor corresponding to the one-hot encoded classes
+#     """
+#     return torch.eye(num_classes, dtype=torch.int)[y]
 
 
 def scale_data(scale, data, device='cpu'):

@@ -8,20 +8,21 @@ NEPTUNE_MODEL_NAME = 'MSMLBAC-'
 import numpy as np
 import random
 import sklearn.neighbors
-import torch
+# import torch
 import sklearn
 import os
 
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 
 import warnings
+# TODO scikit-optimize is discontinued, need to change this. Only works with python 3.8
 from skopt.space import Real, Integer, Categorical
 from sklearn.ensemble import RandomForestClassifier
 
 warnings.filterwarnings("ignore")
 
 random.seed(42)
-torch.manual_seed(42)
+# torch.manual_seed(42)
 np.random.seed(42)
 
 from skopt import gp_minimize
@@ -34,7 +35,7 @@ if __name__ == '__main__':
     # Load data
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--features_file', type=str, default='mutual_info_classif_scores.csv')
+    # parser.add_argument('--features_file', type=str, default='mutual_info_classif_scores.csv')
     parser.add_argument('--remove_zeros', type=int, default=0)
     parser.add_argument('--log1p', type=int, default=0)
     parser.add_argument('--zinb', type=int, default=0)
@@ -44,7 +45,7 @@ if __name__ == '__main__':
     parser.add_argument('--binary', type=int, default=0)
     parser.add_argument('--model_name', type=str, default='linsvc')
     parser.add_argument('--train_on', type=str, default='all')
-    parser.add_argument('--csv_file', type=str, default='inputs.csv')
+    parser.add_argument('--csv_file', type=str, default='inputs')
     parser.add_argument('--ovr', type=int, default=1)
     parser.add_argument('--mz', type=int, default=10)
     parser.add_argument('--rt', type=int, default=10)
@@ -63,6 +64,8 @@ if __name__ == '__main__':
     parser.add_argument("--max_mz", type=int, default=10000)
     parser.add_argument("--min_rt", type=int, default=0)
     parser.add_argument("--max_rt", type=int, default=1000)
+    parser.add_argument("--low_ram", type=int, default=0)
+
     args = parser.parse_args()
     if args.mz < 1:
         args.mz_rounding = len(str(args.mz).split('.')[-1]) + 1
@@ -73,6 +76,8 @@ if __name__ == '__main__':
         args.rt_rounding = len(str(args.rt).split('.')[-1]) + 1
     else:
         args.rt_rounding = 1
+    args.csv_file = f'{args.csv_file}_{args.features_selection}.csv'
+    args.features_file = f'{args.features_selection}_scores.csv'
     args.bins = {
         'mz_bin': args.mz,
         'rt_bin': args.rt,

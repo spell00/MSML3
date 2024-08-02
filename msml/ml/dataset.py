@@ -4,6 +4,7 @@ from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold
 import csv
 from tqdm import tqdm
 from msml.utils.utils import get_unique_labels
+from scipy.sparse import vstack, csr_matrix
 
 def read_csv(csv_file, num_rows=1000, n_cols=1000):
     # data = np.array([])
@@ -16,7 +17,10 @@ def read_csv(csv_file, num_rows=1000, n_cols=1000):
         else:
             progress_bar = tqdm(csv_reader, desc="Reading CSV")
         for row_num, row in enumerate(csv_reader):
-            row = np.array(row)[:n_cols]
+            if n_cols != -1:
+                row = np.array(row)[:n_cols]
+            else:
+                row = np.array(row)
             if num_rows != -1:
                 if row_num >= num_rows:
                     break
@@ -29,7 +33,37 @@ def read_csv(csv_file, num_rows=1000, n_cols=1000):
             del row
             # print(row.shape)
     data = np.stack(data)
+
     return pd.DataFrame(data[1:, :], columns=data[0, :])
+
+def read_csv_low_ram(csv_file, num_rows=1000, n_cols=1000):
+    data = None
+    with open(csv_file, 'r') as file:
+        csv_reader = csv.reader(file)
+        if n_cols != -1:
+            progress_bar = tqdm(csv_reader, desc="Reading CSV")
+            n_cols = n_cols + 3
+        else:
+            progress_bar = tqdm(csv_reader, desc="Reading CSV")
+        for row_num, row in enumerate(csv_reader):
+            if n_cols != -1:
+                row = np.array(row)[:n_cols]
+            else:
+                row = np.array(row)
+            if num_rows != -1:
+                if row_num >= num_rows:
+                    break
+            if data is None:
+                data = row.reshape(1, -1)
+            else:
+                data = np.concatenate((data, row.reshape(1, -1)), 0)
+            progress_bar.update(1)
+            del row
+            # print(row.shape)
+    # data = np.stack(data)
+    return pd.DataFrame(data[1:, :], columns=data[0, :])
+
+
 
 def get_data_infer(path, args, seed=42):
     """
@@ -69,7 +103,10 @@ def get_data_infer(path, args, seed=42):
     # Array of colnames that are not in matrix.columns
     cols = [x for x in top_features.iloc[:, 0].values if x not in matrix.columns]
     # Add zero columns if they are not in matrix.columns
-    matrix = pd.concat((matrix, pd.DataFrame(np.zeros((matrix.shape[0], len(cols))), columns=cols)), 1)
+    if len(cols) > 0:
+        matrix = pd.concat((matrix, pd.DataFrame(np.zeros((matrix.shape[0], len(cols))), columns=cols)), 1)
+    else:
+        pass
     # top_features = top_features[top_features.iloc[:, 0].isin(matrix.columns)]
     matrix = matrix.loc[:, top_features.iloc[:, 0].values[:args.n_features]]
     if args.remove_zeros:
@@ -239,8 +276,10 @@ def get_data(path, args, seed=42):
                     valid_inds], data['concs']['train_pool'][test_inds]
 
         else:
-            matrix = read_csv(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
-            top_features = read_csv(csv_file=f"{path}/{args.features_file}", num_rows=-1, n_cols=args.n_features)
+            if args.low_ram:
+                matrix = read_csv_low_ram(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
+            else:
+                matrix = read_csv(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
             names = matrix.iloc[:, 0]
             labels = matrix.iloc[:, 1]
 
@@ -258,7 +297,11 @@ def get_data(path, args, seed=42):
             # batches = np.stack([np.argwhere(x == unique_batches).squeeze() for x in batches])
             orders = np.array([0 for _ in batches])
             matrix = matrix.iloc[:, 3:].fillna(0).astype(float)
-            matrix = matrix.loc[:, top_features.iloc[:, 0].values[:args.n_features]]
+            if args.features_selection != 'none':
+                top_features = read_csv(csv_file=f"{path}/{args.features_file}", num_rows=-1, n_cols=args.n_features)
+                matrix = matrix.loc[:, top_features.iloc[:, 0].values[:args.n_features]]
+            else:
+                matrix = matrix.iloc[:, :args.n_features]
             if args.remove_zeros:
                 mask1 = (matrix == 0).mean(axis=0) < 0.1
                 matrix = matrix.loc[:, mask1]
@@ -323,11 +366,11 @@ def get_data(path, args, seed=42):
             if key in ['inputs']:
                 data[key]['all'] = pd.concat((
                     data[key]['train'], data[key]['valid'], data[key]['test']
-                ), 0)
+                ), axis=0)
             else:
                 data[key]['all'] = np.concatenate((
                     data[key]['train'], data[key]['valid'], data[key]['test']
-                ), 0)
+                ), axis=0)
         
         unique_batches = np.unique(data['batches']['all'])
         # for group in ['train', 'valid', 'test', 'all']:
@@ -338,10 +381,10 @@ def get_data(path, args, seed=42):
                 data[key]['all'] = pd.concat((
                     data[key]['train'], data[key]['valid'], data[key]['test'],
                     data[key]['train_pool'], data[key]['valid_pool'], data[key]['test_pool'],
-                ), 0)
+                ), axis=0)
                 data[key]['all_pool'] = pd.concat((
                     data[key]['train_pool'], data[key]['valid_pool'], data[key]['test_pool'],
-                ), 0)
+                ), axis=0)
             else:
                 data[key]['all'] = np.concatenate((
                     data[key]['train'], data[key]['valid'], data[key]['test'],
@@ -447,7 +490,10 @@ def get_data2(path, args, seed=42):
                     valid_inds], data['concs']['train_pool'][test_inds]
 
         else:
-            matrix = read_csv(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
+            if args.low_ram:
+                matrix = read_csv_low_ram(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
+            else:
+                matrix = read_csv(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
             top_features = read_csv(csv_file=f"{path}/{args.features_file}", num_rows=-1, n_cols=args.n_features)
             names = matrix.iloc[:, 0]
             labels = matrix.iloc[:, 1]

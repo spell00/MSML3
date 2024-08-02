@@ -47,3 +47,7 @@ file_types = ['raw', 'mzdb/200spd', 'tsv/mz10/rt10/200spd/ms2/all', 'tsv/mz0.1/r
 
 for file_type in file_types:
     analyze_directory(directory_path, file_type)
+
+tsv2df_path = f'resources/bacteries_2024/matrices/mz10/rt10/thr0.0/'\
+                f'200spd/ms2/combat0/shift0/none/loginloop/mutual_info_classif/all'\
+                f'/all_B15_gkf0_mz0-10000rt0-320_5splits'

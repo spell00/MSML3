@@ -23,6 +23,7 @@ from scipy import stats
 from log_shap import log_shap
 import xgboost
 import matplotlib.pyplot as plt
+import joblib
 
 class Infer:
     def __init__(self, name, model, data, uniques,
@@ -113,6 +114,7 @@ class Infer:
         self.unique_labels = np.concatenate((['blanc'], np.delete(self.unique_labels, blanc_class)))
         self.model_name = f'binary{self.args.binary}_{self.args.model_name}'
         self.uniques['labels'] = self.unique_labels
+        all_data, scaler = scale_data(scaler_name, all_data)
 
         if self.log_neptune:
             # Create a Neptune run object
@@ -165,24 +167,20 @@ class Infer:
             model = None
             run = None
 
-        all_data, scaler = scale_data(scaler_name, all_data)
-
         # import array of columns from columns_after_threshold.pkl
         with open(f'{self.log_path}/columns_after_threshold.pkl', 'rb') as f:
             columns = pickle.load(f)
+
         all_data['inputs']['all'] = all_data['inputs']['all'][columns]
         all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'][columns]
         all_data['inputs']['test'] = all_data['inputs']['test'][columns]
 
-        # save scaler
-        os.makedirs(f'{self.log_path}/saved_models/', exist_ok=True)
-        with open(f'{self.log_path}/saved_models/{scaler_name}_scaler.pkl', 'wb') as f:
-            pickle.dump(scaler, f)
+        all_data, scaler = scale_data(scaler_name, all_data)
 
         print(f'Iteration: {self.iter}')
-        models = []
-        h = 0
-        seed = 0
+        # models = []
+        # h = 0
+        # seed = 0
 
         lists['names']['posurines'] += [np.array([x.split('_')[-2] for x in all_data['names']['urinespositives']])]
         lists['batches']['posurines'] += [all_data['batches']['urinespositives']]
@@ -198,18 +196,18 @@ class Infer:
         lists['labels']['test'] += [all_data['labels']['all']]
 
         # Load all pkl files
-        m = [pickle.load(open(f'{self.args.path}/{x}', 'rb')) for x in os.listdir(f'{self.args.path}') if x.endswith('.pkl') and 'columns' not in x]
+        # models = [joblib.load(f'{self.args.exp_name}/{self.args.model_name}_minmax2_{i}.pkl') for i in [0, 1, 2, 3, 4]]
         # models += [m]
 
         try:
-            lists['proba']['test'] += [[m[i].predict_proba(test_data) for i in range(len(m))]]
+            lists['proba']['test'] += [[self.model[i].predict_proba(test_data) for i in range(len(self.model))]]
             # take the average of the proba
             lists['proba']['test'][-1] = np.mean(np.stack(lists['proba']['test'][-1]), 0)
             # Take the highest proba to make a pred
             lists['preds']['test'] += [np.argmax(lists['proba']['test'][-1], axis=1)]
 
         except:
-            lists['preds']['test'] += [[m[i].predict(test_data.values) for i in range(len(m))]]
+            lists['preds']['test'] += [[self.model[i].predict(test_data.values) for i in range(len(self.model))]]
             # take the mode of the predictions
             lists['preds']['test'] = [stats.mode(np.stack(lists['preds']['test']), axis=0)[0].flatten()]
 
@@ -276,17 +274,17 @@ class Infer:
               )
         lists = self.save_confusion_matrices(lists, run)
         self.save_roc_curves(lists, run)
-        if np.mean(lists['mcc']['test']) > np.mean(self.best_scores['mcc']['test']):
-            log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path)
+        # if np.mean(lists['mcc']['test']) > np.mean(self.best_scores['mcc']['test']):
+            # log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path)
             # Save the individual scores of each sample with class, #batch
-            self.save_results_df(lists, run)
+        self.save_results_df(lists, run)
             # best_scores = self.save_best_model_hparams(param_grid, other_params, scaler_name, lists['unique_batches'], metrics)
-        else:
-            best_scores = {
-                'nbe': None,
-                'ari': None,
-                'ami': None,
-            }
+        # else:
+        #     best_scores = {
+        #         'nbe': None,
+        #         'ari': None,
+        #         'ami': None,
+        #     }
 
         if self.log_neptune:
             log_neptune(run, lists, None)
