@@ -308,18 +308,8 @@ def get_data(path, args, seed=42):
             if args.log1p:
                 matrix.iloc[:] = np.log1p(matrix.values)
             matrix.iloc[:] = np.nan_to_num(matrix.values)
-            # pool_pos = [i for i, name in enumerate(names.values.flatten()) if 'QC' in name]
-            pos = [i for i, name in enumerate(names.values.flatten()) if 'QC' not in name]
 
-            #data['inputs'][group] = matrix.iloc[pos]
-            #data['names'][group] = names
-            #data['labels'][group] = labels.to_numpy()[pos]
-            #data['batches'][group] = batches.to_numpy()[pos]
-            #data['manips'][group] = manips[pos]
-            #data['urines'][group] = urines[pos]
-            #data['concs'][group] = concs[pos]
-            ## This is juste to make the pipeline work. Meta should be 0 for the amide dataset
-            #data['orders'][group] = orders[pos]
+            pos = [i for i, name in enumerate(names.values.flatten()) if 'QC' not in name]
 
             pos = [i for i, name in enumerate(names.values.flatten()) if 'urinespositives' in name]
             not_pos = [i for i, name in enumerate(names.values.flatten()) if 'urinespositives' not in name]
@@ -336,8 +326,10 @@ def get_data(path, args, seed=42):
             # place blancs at the end
             blanc_class = np.argwhere(unique_labels == 'blanc').flatten()[0]
             unique_labels = np.concatenate((np.delete(unique_labels, blanc_class), ['blanc']))
+
             data['cats'][group] = np.array(
-                [np.where(x == unique_labels)[0][0] for i, x in enumerate(data['labels'][group])])
+                [np.where(x == unique_labels)[0][0] for i, x in enumerate(data['labels'][group])]
+            )
 
             if args.pool:
                 pool_pos = [i for i, name in enumerate(names.values.flatten()) if 'QC' in name]

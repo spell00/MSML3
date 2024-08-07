@@ -255,7 +255,8 @@ class MakeTensorsMultiprocess:
         total_time = np.round(total_time, 2)
         tsv_size = np.round(tsv_size, 2)
         print(
-            f"Finished file {index}. Total memory: {total_memory}  MB, time: {total_time} seconds")
+            f"Finished file {index}. Total memory: {total_memory}  MB, time: {total_time} seconds"
+        )
         csv_file = f'{self.path}/{self.args.exp_name}/time.csv'
         with open(csv_file, 'a', newline='', encoding='utf-8') as f:
             csv_writer = csv.writer(f)
@@ -269,20 +270,20 @@ class MakeTensorsMultiprocess:
         return len(self.tsv_list)
 
     def save_images_and_csv3d(self, final, df, label, i):
-        os.makedirs(f"{self.path}/{args.exp_name}/csv3d/{label}/", exist_ok=True)
-        os.makedirs(f"{self.path}/{args.exp_name}/images3d/{label}/", exist_ok=True)
-        final.to_csv(f"{self.path}/{args.exp_name}/csv3d/{label}/{label}_{i}.csv", index_label='ID')
+        os.makedirs(f"{self.path}/{self.args.exp_name}/csv3d/{label}/", exist_ok=True)
+        os.makedirs(f"{self.path}/{self.args.exp_name}/images3d/{label}/", exist_ok=True)
+        final.to_csv(f"{self.path}/{self.args.exp_name}/csv3d/{label}/{label}_{i}.csv", index_label='ID')
         im = Image.fromarray(np.uint8(cm.gist_earth(df) * 255))
-        im.save(f"{self.path}/{args.exp_name}/images3d/{label}/{label}_{i}.png")
+        im.save(f"{self.path}/{self.args.exp_name}/images3d/{label}/{label}_{i}.png")
         im.close()
         del im
 
     def save_images_and_csv(self, final, df, label):
-        os.makedirs(f"{self.path}/{args.exp_name}/csv/", exist_ok=True)
-        os.makedirs(f"{self.path}/{args.exp_name}/images/", exist_ok=True)
-        final.to_csv(f"{self.path}/{args.exp_name}/csv/{label}.csv", index_label='ID')
+        os.makedirs(f"{self.path}/{self.args.exp_name}/csv/", exist_ok=True)
+        os.makedirs(f"{self.path}/{self.args.exp_name}/images/", exist_ok=True)
+        final.to_csv(f"{self.path}/{self.args.exp_name}/csv/{label}.csv", index_label='ID')
         im = Image.fromarray(np.uint8(cm.gist_earth(df) * 255))
-        im.save(f"{self.path}/{args.exp_name}/images/{label}.png")
+        im.save(f"{self.path}/{self.args.exp_name}/images/{label}.png")
         im.close()
         del im
 
@@ -594,7 +595,6 @@ if __name__ == "__main__":
     else:
         bacteria_to_keep = None
     if args.make_data or not os.path.exists(f'{dir_name}/{args.run_name}'):
-
         data_matrices, labels, max_mzs, max_rts, parents = [], [], [], [], []
         for dir_input in dir_inputs:
             print(f"Processing {dir_input}")
@@ -634,14 +634,15 @@ if __name__ == "__main__":
             peaks_list = pd.read_csv(f"{dir_name}/{args.run_name}/variance_scores.csv", index_col=0)
             data_matrix = msalign(data_matrix.columns, data_matrix.values)
         os.makedirs(f'{dir_name}/{args.run_name}', exist_ok=True)
-        columns_to_keep = load(open(columns_filename, 'rb'))
-        to_keep = np.array([i for i, x in enumerate(columns) if x in columns_to_keep])
+        columns_to_keep = load(open(columns_filename, 'rb'))  
+        to_keep = np.array([i for i, x in enumerate(columns) if x in columns_to_keep])  # TODO THIS IS CORRECT. THE ERROR MUST BE FURTHER DOWN
         data_matrix = sparse.lil_matrix(data_matrix[:,to_keep])  # TODO There are other instances where I could have used this function
         dump(data_matrix, open(matrix_filename, 'wb'))
         dump(labels, open(labels_filename, 'wb'))
+        
     else:
         data_matrix = load(open(matrix_filename, 'rb'))
-        columns = load(open(columns_filename, 'rb'))
+        columns_to_keep = columns = load(open(columns_filename, 'rb'))
         labels = load(open(labels_filename, 'rb'))
     
     print('\nComplete data shape', data_matrix.shape)
@@ -723,12 +724,12 @@ if __name__ == "__main__":
         else:
             features = pd.read_csv(args.mutual_info_path)['minp_maxp_rt_mz'].to_numpy()
     else:
-        features = load(open(columns_filename, 'rb'))
+        features = columns_to_keep
     copyfile(args.mutual_info_path, f'{dir_name}/{args.run_name}/{args.feature_selection}_scores.csv')
     # Copy columns_filename from exp_name to run_name
-    copyfile(columns_filename, f'{dir_name}/{args.run_name}/columns_nozeros.pkl')
+    copyfile(columns_filename, f'{dir_name}/{args.run_name}/columns_nozeros.pkl')  # TODO MAYBE THE ERROR IS HERE??
 
-    feats_pos = [np.argwhere(x==columns)[0][0] for x in features if x in columns]
+    feats_pos = [np.argwhere(x==columns_to_keep)[0][0] for x in features if x in columns_to_keep]
     # Save the feats_pos if file not exist yet, else load it
     if not os.path.exists(f'{dir_name}/{args.exp_name}/feats_pos.pkl'):
         dump(feats_pos, open(f'{dir_name}/{args.run_name}/feats_pos.pkl', 'wb'))

@@ -267,14 +267,7 @@ class Train:
                       test_data.iloc[test_to_keep], test_labels[test_to_keep], test_batches[test_to_keep], test_names[test_to_keep]
 
                 valid_inds, test_inds = valid_inds[valid_to_keep], test_inds[test_to_keep]
-                # print(h)
-                # print('train:', Counter(train_batches))
-                # print('valid:', Counter(valid_batches))
-                # print('test:', Counter(test_batches))
-                # print('All:', Counter(all_data['labels']['all']))
-                # print('Train:', np.unique(train_batches), Counter(train_labels))
-                # print('Valid:', np.unique(valid_batches), Counter(valid_labels))
-                # print('Test:', np.unique(test_batches), Counter(test_labels))
+
             elif self.args.train_on == 'all_lows':
                 # keep all concs for train to be all_data['concs']['all'] == 'l'        
                 train_inds = np.argwhere(all_data['concs']['all'] == 'l').flatten()
@@ -479,7 +472,12 @@ class Train:
         metrics = log_fct(data, scaler_name, metrics)
         log_ord(data, self.uniques2, ord_path, f'{scaler_name}_blancs', run)
 
-        print(lists['mcc']['valid'])
+        if self.args.groupkfold:
+            batches = np.concatenate([np.unique(x) for x in lists['batches']['valid']])
+            toprint = [f"{batches[i]}:{lists['mcc']['valid'][i]}" for i in range(len(batches))]
+            print(toprint)
+        else:
+            print(lists['mcc']['valid'])
         print('valid_acc:', np.mean(lists['acc']['valid']), \
               'valid_mcc:', np.mean(lists['mcc']['valid']), \
               'scaler:', scaler_name,
@@ -490,8 +488,9 @@ class Train:
         if np.mean(lists['mcc']['valid']) > np.mean(self.best_scores['mcc']['valid']):
             log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path)
             # save the features kept
-            with open(f'{self.log_path}/saved_models/columns_after_threshold.pkl', 'wb') as f:
+            with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}.pkl', 'wb') as f:
                 pickle.dump(data_list['test']['inputs'].columns, f)
+            
             self.dump_models(models, scaler_name, lists)
             # Save the individual scores of each sample with class, #batch
             self.save_results_df(lists, run)

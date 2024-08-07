@@ -66,7 +66,7 @@ if __name__ == '__main__':
     parser.add_argument("--max_rt", type=int, default=1000)
     parser.add_argument("--low_ram", type=int, default=0)
     parser.add_argument("--n_splits", type=int, default=5)
-    parser.add_argument("--train_batches", type=str, default='b14-b13-b12-b11-b10-b9-b8-b7-b6-b5-b4-b3-b2-b1')
+    parser.add_argument("--train_batches", type=str, default='b15-b14-b13-b12-b11-b10-b9-b8-b7-b6-b5-b4-b3-b2-b1')
     args = parser.parse_args()
 
     args.model_name = f"{args.model_name}"

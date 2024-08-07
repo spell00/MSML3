@@ -369,9 +369,6 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
     max_rt = max([max([x[0][y].shape[1] for y in x[0]]) for x in data_matrix])
     max_mz = max([max([x[0][y].shape[0] for y in x[0]]) for x in data_matrix])
 
-    # assert type(max_rt) == int and type(max_mz) == int
-
-    # data_matrix = np.concatenate(([x[0] for x in data_matrix]))
     if args_dict.rt_rounding == 0:
         rt_bin = int(args_dict.rt_bin_post)
     else:
@@ -544,11 +541,12 @@ if __name__ == "__main__":
                f"shift{args.shift}/{args.scaler}/log{args.log2}/{args.feature_selection}/"
     
     batches = [
-        "B14-06-10-2024", "B13-06-05-2024", "B12-05-31-2024", "B11-05-24-2024",
-        "B10-05-03-2024", "B9-04-22-2024", "B8-04-15-2024", 
-        'B7-04-03-2024', 'B6-03-29-2024', 'B5-03-13-2024', 
-        'B4-03-01-2024', 'B3-02-29-2024', 'B2-02-21-2024', 
-        'B1-02-02-2024', 
+        "B15-06-29-2024",
+        # "B14-06-10-2024", "B13-06-05-2024", "B12-05-31-2024",
+        # "B11-05-24-2024", "B10-05-03-2024", "B9-04-22-2024",
+        # "B8-04-15-2024", 'B7-04-03-2024', 'B6-03-29-2024',
+        # 'B5-03-13-2024', 'B4-03-01-2024', 'B3-02-29-2024',
+        # 'B2-02-21-2024', 'B1-02-02-2024'
     ]
     dir_inputs = []
     for batch in batches:
@@ -614,7 +612,7 @@ if __name__ == "__main__":
         columns = load(open(columns_filename, 'rb'))
         labels = load(open(labels_filename, 'rb'))
     print("Finding not zeros only columns...")
-    print('\nComplete data shape', data_matrix.shape)
+    print('\nComplete data shape', data_matrix.shape)    
 
     # TODO only pass and return a list of list of columns. 
     # TODO data_matrix could be seperated without taking more space
@@ -636,8 +634,15 @@ if __name__ == "__main__":
 
     new_columns = np.array([x for x in np.concatenate([x[0] for x in notzeros])])
     not_zeros_col = np.array([x for x in np.concatenate([x[1] for x in notzeros])])
+    # zeros_cols = np.array([x for x in range(len(columns)) if x not in not_zeros_col])
     # not_zeros_col = np.array([x for x in np.concatenate([x[1] for x in notzeros])])
     data_matrix = data_matrix[:, not_zeros_col]
+    # Make sure the columns are all 0
+    try:
+        assert np.all(data_matrix.sum(0) != 0)
+    except AssertionError:
+        print('Not all columns are 0')
+        # exit()
 
     pool.close()
     pool.join()

@@ -168,7 +168,7 @@ class Infer:
             run = None
 
         # import array of columns from columns_after_threshold.pkl
-        with open(f'{self.log_path}/columns_after_threshold.pkl', 'rb') as f:
+        with open(f'{self.args.exp_name}/columns_after_threshold_minmax2.pkl', 'rb') as f:
             columns = pickle.load(f)
 
         all_data['inputs']['all'] = all_data['inputs']['all'][columns]
@@ -465,7 +465,7 @@ class Infer:
         df_test.loc[:, 'preds'] = [
             self.unique_labels[l] for l in df_test.loc[:, 'preds'].to_numpy()
         ]
-
+        os.makedirs(f'{self.log_path}/saved_models', exist_ok=True)
         df_test.to_csv(f'{self.log_path}/saved_models/{self.args.model_name}_test_individual_results.csv')
         run[f'test/individual_results'].upload(f'{self.log_path}/saved_models/{self.args.model_name}_test_individual_results.csv')
         self.save_thresholds_curve('test', lists, run)
