@@ -21,6 +21,7 @@
 # Install python dependencies
 `pip install -r requirements.txt`
 
+
 # Time summary
 Using 200spd lc-msms,
 raw2mzdb: ~ ? minutes / sample (Fully parallelized)
@@ -112,3 +113,6 @@ Domain Accuracy: Should be random (e.g. ~0.5 if 2 batches)
                                          are different (subcategories are optional).
 (Train, Valid or Test) Accuracy (l, h or v): Classification accuracies
 (Train, Valid or Test) MCC (l, h or v): Matthews correlation coefficients
+
+## REMARKS
+The controls are hard-coded to be named "blanc". That should be change to allow custom names, but that's how it is for the moment
