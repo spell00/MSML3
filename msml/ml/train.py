@@ -506,6 +506,7 @@ class Train:
               'scaler:', scaler_name,
               'h_params:', param_grid
               )
+        posurines_df = None  # TODO move somewhere more logical
         if np.mean(lists['mcc']['valid']) > np.mean(self.best_scores['mcc']['valid']):
             lists, posurines_df = self.save_confusion_matrices(all_data, lists, run)
             self.save_roc_curves(lists, run)
@@ -525,7 +526,7 @@ class Train:
                 'ari': None,
                 'ami': None,
             }
-        if all_data['inputs']['urinespositives'].shape[0] > 0:
+        if all_data['inputs']['urinespositives'].shape[0] > 0 and posurines_df is not None:
             self.save_thresholds_curve0('posurines', posurines_df, run)
             self.save_thresholds_curve('posurines', lists, run)
             run[f'posurines/individual_results'].upload(
@@ -613,17 +614,7 @@ class Train:
             pd.read_csv(f'resources/bacteries_2024/B10-05-03-2024/b10_patients_samples.csv'),
             pd.read_csv(f'resources/bacteries_2024/B11-05-24-2024/b11_patients_samples.csv')
         ))
-        # Add the missing blancs in urinespositives_real_df
-        # urinespositives_real_df = pd.concat((
-        #     urinespositives_real_df,
-        #     pd.DataFrame(
-        #         {
-        #             'ID': blanc_names,
-        #             'Class': ['blanc' for _ in blanc_names]
-        #         }
-        #     )
-        # ))
-        # remove names that are not in the real df
+
         urinespositives_names = np.array([x for x in urinespositives_names if x in urinespositives_real_df.loc[:, 'ID'].to_numpy()])
         urinespositives_names = np.unique(urinespositives_names)
         urinespositives_real_df.loc[:, 'Class'] = [l.lower() for l in urinespositives_real_df.loc[:, 'Class'].to_numpy()]
@@ -631,41 +622,49 @@ class Train:
             urinespositives_real_df.loc[:, 'Class'] = ['blanc' if l == 'blanc' else 'bact' for l in urinespositives_real_df.loc[:, 'Class'].to_numpy()]
         intersect = np.intersect1d(urinespositives_names, urinespositives_real_df.loc[:, 'ID'].to_numpy())
         to_keep = [i for i, x in enumerate(urinespositives_names) if x in intersect]
-        # to_keep2 = np.argwhere(np.isin(urinespositives_real_df.loc[:, 'ID'].to_numpy(), urinespositives_names) == True).flatten()
-        # take intersect
-        # to_keep = np.intersect1d(to_keep, to_keep2)
+
         urinespositives_names = urinespositives_names[to_keep]
         urinespositives_batches = urinespositives_batches[to_keep]
 
         to_keep = [i for i, x in enumerate(urinespositives_real_df.loc[:, 'ID']) if x in intersect]
         urinespositives_real_df = urinespositives_real_df.iloc[to_keep]
-        # remove duplicates from urinespositives_real_df
 
         new_order = np.argsort(urinespositives_names)
         urinespositives_real_df = urinespositives_real_df.iloc[new_order]
-        # make sure the order is the same
-        # assert np.sum([x == urinespositives_real_df.loc[:, 'ID'].to_numpy() for x in urinespositives_names]) == len(urinespositives_names)
+
         blanc_ids = [
             np.array([i for i, x in enumerate(lists['labels']['valid'][j]) if x == 'blanc']) for j in range(len(lists['labels']['valid']))
         ]
+        # lists['names']['posurines'] = [
+        #     [lists['names']['posurines'][j][i] for i in to_keep] + [lists['names']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['names']['posurines']))
+        # ]
+        # lists['batches']['posurines'] = [
+        #     [lists['batches']['posurines'][j][i] for i in to_keep] + [lists['batches']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['batches']['posurines']))
+        # ]
+        # Get the labels of urinespositives_real_df in the same order as the names
+        # lists['labels']['posurines'] = [
+        #     urinespositives_real_df.loc[:, 'Class'].to_numpy().tolist() + [lists['labels']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['preds']['posurines']))
+        # ]
+
         lists['names']['posurines'] = [
-            [lists['names']['posurines'][j][i] for i in to_keep] + [lists['names']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['names']['posurines']))
+            [lists['names']['posurines'][j][i] for i in to_keep] for j in range(len(lists['names']['posurines']))
         ]
         lists['batches']['posurines'] = [
-            [lists['batches']['posurines'][j][i] for i in to_keep] + [lists['batches']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['batches']['posurines']))
+            [lists['batches']['posurines'][j][i] for i in to_keep] for j in range(len(lists['batches']['posurines']))
         ]
         # Get the labels of urinespositives_real_df in the same order as the names
-        urinespositives_real_df = urinespositives_real_df.loc[:, 'Class'].to_numpy()
-        
         lists['labels']['posurines'] = [
-            urinespositives_real_df.loc[:, 'Class'].to_numpy().tolist() + [lists['labels']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['preds']['posurines']))
+            urinespositives_real_df.loc[:, 'Class'].to_numpy().tolist() for j in range(len(lists['preds']['posurines']))
         ]
+
+        # urinespositives_real_df = urinespositives_real_df.loc[:, 'Class'].to_numpy()
+        
         try:
             lists['preds']['posurines'] = [
-                [lists['preds']['posurines'][j][i] for i in to_keep] + [lists['preds']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['preds']['posurines']))
+                [lists['preds']['posurines'][j][i] for i in to_keep] for j in range(len(lists['preds']['posurines']))
             ]
             lists['proba']['posurines'] = [
-                [lists['proba']['posurines'][j][i] for i in to_keep] + [lists['proba']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['proba']['posurines']))
+                [lists['proba']['posurines'][j][i] for i in to_keep] for j in range(len(lists['proba']['posurines']))
             ]
             posurines_df = pd.DataFrame(
                 {
@@ -681,8 +680,11 @@ class Train:
                 posurines_df[label] = np.concatenate(lists['proba']['posurines'])[:, i]
 
         except:
+            # lists['preds']['posurines'] = [
+            #     [lists['preds']['posurines'][j][i] for i in to_keep] + [lists['preds']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['preds']['posurines']))
+            # ]
             lists['preds']['posurines'] = [
-                [lists['preds']['posurines'][j][i] for i in to_keep] + [lists['preds']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['preds']['posurines']))
+                [lists['preds']['posurines'][j][i] for i in to_keep] for j in range(len(lists['preds']['posurines']))
             ]
             posurines_df = pd.DataFrame(
                 {
@@ -700,23 +702,44 @@ class Train:
         posurines_df.to_csv(
             f'{self.log_path}/saved_models/{self.args.model_name}_posurines_individual_results.csv'
         )
-        lists['proba']['posurines'] = np.stack(lists['proba']['posurines'])
+        try:
+            lists['proba']['posurines'] = np.stack(lists['proba']['posurines'])
+        except:
+            return posurines_df, lists
+        def flatten(xss):
+            return [x for xs in xss for x in xs]        
+        blk_names = flatten([
+            [lists['names']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['names']['posurines']))
+        ])
+        blk_batches = flatten([
+            [lists['batches']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['batches']['posurines']))
+        ])
+        blk_labels = flatten([
+            [lists['labels']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['labels']['posurines']))
+        ])
+        blk_preds = flatten([
+            [lists['preds']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['preds']['posurines']))
+        ])
         try:
             proba_posurines = np.mean(lists['proba']['posurines'], 0)
             preds_posurines = proba_posurines.argmax(1)
             best_proba_posurines = np.array([
                 proba_posurines[i, x] for i, x in enumerate(preds_posurines)
             ])
+            blk_proba = np.stack(flatten([
+                [lists['proba']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['proba']['posurines']))
+            ]))
 
             posurines_df = pd.DataFrame(
                 {
-                    'names': urinespositives_names,
-                    'batches': urinespositives_batches,
-                    'preds': preds_posurines,
-                    'labels': urinespositives_real_df.loc[:, 'Class'],                
-                    'proba': best_proba_posurines,                    
+                    'names': lists['names']['posurines'][0] + blk_names,
+                    'batches': lists['batches']['posurines'][0] + blk_batches,
+                    'preds': lists['preds']['posurines'][0] + blk_preds,
+                    'labels': lists['labels']['posurines'][0] + blk_labels,                
+                    'proba': np.concatenate((proba_posurines.max(1).flatten(), blk_proba.max(1).flatten())),                    
                 }
             )
+            proba_posurines = np.concatenate((proba_posurines, blk_proba))
             for i, label in enumerate(self.unique_labels):
                 posurines_df[label] = proba_posurines[:, i]
         except:
@@ -815,7 +838,6 @@ class Train:
             
         plot_bars(self.args, run, self.unique_labels)
         
-
     def save_roc_curves(self, lists, run):
         try:
             self.best_roc_train = plot_roc(lists['proba']['train'], lists['classes']['train'], self.unique_labels,
@@ -883,8 +905,8 @@ class Train:
                     'names': lists['names'][group][batch]
                 }
             )
-            for i, label in enumerate(self.unique_labels):
-                df[label] = lists['proba'][group][batch][:, i]
+            # for i, label in enumerate(self.unique_labels):
+            #     df[label] = lists['proba'][group][batch][:, i]
             df.loc[:, 'preds'] = [
                 self.unique_labels[l] for l in df.loc[:, 'preds'].to_numpy()
             ]
@@ -951,8 +973,11 @@ class Train:
             for thres in thresholds:
                 f.write(f'{thres},{np.mean(accs[thres])},{np.std(accs[thres])},{np.mean(mccs[thres])},{np.std(mccs[thres])},{np.mean(proportion_predicted[thres])},{np.std(proportion_predicted[thres])}\n')
 
-
     def dump_models(self, models, scaler_name, lists):
+        # Save unique labels
+        with open(f'{self.log_path}/saved_models/unique_labels.json', "w") as read_file:
+            json.dump(self.unique_labels.tolist(), read_file)
+
         for i, m in enumerate(models):
             # save model
             with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}.pkl', 'wb') as f:
@@ -981,14 +1006,16 @@ class Train:
             posurines_df = posurines_df.iloc[relevant_samples]
             posurines_classes = [int(np.argwhere(l == self.unique_labels).flatten()) for l in posurines_df.loc[:, 'labels'].to_numpy()]
             posurines_preds = [int(np.argwhere(l == self.unique_labels).flatten()) for l in posurines_df.loc[:, 'preds'].to_numpy()]
+
             lists['acc']['posurines'] = [ACC(posurines_preds, posurines_classes)]
             lists['mcc']['posurines'] = [MCC(posurines_preds, posurines_classes)]
             lists['classes']['posurines'] = [posurines_classes for _ in range(len(lists['preds']['posurines']))]
-            # lists['preds']['posurines'] = [posurines_preds]
-            # lists['names']['posurines'] = [posurines_df.loc[:, 'names'].to_numpy()]
-            # lists['batches']['posurines'] = [posurines_df.loc[:, 'batches'].to_numpy()]
+            lists['preds']['posurines'] = [posurines_preds for _ in range(len(lists['preds']['posurines']))]
+            lists['names']['posurines'] = [posurines_df.loc[:, 'names'].to_numpy() for _ in range(len(lists['preds']['posurines']))]
+            lists['batches']['posurines'] = [posurines_df.loc[:, 'batches'].to_numpy() for _ in range(len(lists['preds']['posurines']))]
             lists['labels']['posurines'] = [posurines_df.loc[:, 'labels'].to_numpy() for _ in range(len(lists['preds']['posurines']))]
-            # lists['proba']['posurines'] = [posurines_df.iloc[:, -len(self.unique_labels)].to_numpy()]
+            lists['proba']['posurines'] = [posurines_df.loc[:, 'proba'].to_numpy() for _ in range(len(lists['preds']['posurines']))]
+
             fig = get_confusion_matrix(posurines_classes, posurines_preds, self.unique_labels)
             save_confusion_matrix(fig, 
                                     f"{self.log_path}/confusion_matrices/" 

@@ -108,13 +108,24 @@ class Infer:
         if self.args.binary:
             all_data['labels']['all'] = np.array(['blanc' if label=='blanc' else 'bact' for label in all_data['labels']['all']])
         # self.unique_labels devrait disparaitre et remplace par self.uniques['labels']
-        self.unique_labels = np.array(np.unique(all_data['labels']['all']))
-        # place blancs at the end
-        blanc_class = np.argwhere(self.unique_labels == 'blanc').flatten()[0]
-        self.unique_labels = np.concatenate((['blanc'], np.delete(self.unique_labels, blanc_class)))
+        # import array of columns from columns_after_threshold.pkl
+        with open(f'{self.args.exp_name}/unique_labels.json', 'rb') as f:
+            self.unique_labels = json.load(f)
+            self.unique_labels = np.array(self.unique_labels)
         self.model_name = f'binary{self.args.binary}_{self.args.model_name}'
         self.uniques['labels'] = self.unique_labels
         all_data, scaler = scale_data(scaler_name, all_data)
+
+        # import array of columns from columns_after_threshold.pkl
+        with open(f'{self.args.exp_name}/columns_after_threshold_{self.args.scaler_name}.pkl', 'rb') as f:
+            columns = pickle.load(f)
+
+        all_data['inputs']['all'] = all_data['inputs']['all'][columns]
+        all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'][columns]
+        all_data['inputs']['test'] = all_data['inputs']['test'][columns]
+
+        all_data, scaler = scale_data(scaler_name, all_data)
+
 
         if self.log_neptune:
             # Create a Neptune run object
@@ -167,15 +178,6 @@ class Infer:
             model = None
             run = None
 
-        # import array of columns from columns_after_threshold.pkl
-        with open(f'{self.args.exp_name}/columns_after_threshold_minmax2.pkl', 'rb') as f:
-            columns = pickle.load(f)
-
-        all_data['inputs']['all'] = all_data['inputs']['all'][columns]
-        all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'][columns]
-        all_data['inputs']['test'] = all_data['inputs']['test'][columns]
-
-        all_data, scaler = scale_data(scaler_name, all_data)
 
         print(f'Iteration: {self.iter}')
         # models = []
@@ -194,10 +196,6 @@ class Infer:
 
         lists['classes']['test'] += [np.array([np.argwhere(l == self.unique_labels)[0][0] for l in all_data['labels']['all']])]
         lists['labels']['test'] += [all_data['labels']['all']]
-
-        # Load all pkl files
-        # models = [joblib.load(f'{self.args.exp_name}/{self.args.model_name}_minmax2_{i}.pkl') for i in [0, 1, 2, 3, 4]]
-        # models += [m]
 
         try:
             lists['proba']['test'] += [[self.model[i].predict_proba(test_data) for i in range(len(self.model))]]

@@ -67,6 +67,7 @@ if __name__ == '__main__':
     parser.add_argument("--low_ram", type=int, default=0)
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--train_batches", type=str, default='b14-b13-b12-b11-b10-b9-b8-b7-b6-b5-b4-b3-b2-b1')
+    parser.add_argument("--scaler_name", type=str, default='minmax2')
     args = parser.parse_args()
 
     args.model_name = f"{args.model_name}"
@@ -146,9 +147,6 @@ if __name__ == '__main__':
     data['manips']['all'] = data['manips']['all'][mask2]
     data['concs']['all'] = data['concs']['all'][mask2]
     
-    # path = f'results/multi/mz{args.mz}/rt{args.rt}/ms{args.ms_level}/{args.spd}spd/thr{args.threshold}/' \
-    #        f'{args.train_on}/{args.exp_name}/{args.model_name}/'
-
     from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler
     from sklearn.pipeline import Pipeline
     minmax_scaler = MinMaxScaler()
@@ -159,10 +157,10 @@ if __name__ == '__main__':
     robust_minmax_scaler = Pipeline([('robust', RobustScaler()),
                                      ('minmax', MinMaxScaler())])
     import joblib
-    models = [joblib.load(f'{args.exp_name}/{args.model_name}_minmax2_{i}.pkl') for i in [0, 1, 2, 3, 4]]
+    models = [joblib.load(f'{args.exp_name}/{args.model_name}_{args.scaler_name}_{i}.pkl') for i in [0, 1, 2, 3, 4]]
     names = [x.split('.')[0] for x in os.listdir(path) if x.endswith('.pkl')]
     args.path = path
-    args.scaler_name = 'minmax2'  # changer pour que ce soit automatique
+    # args.scaler_name = 'minmax2'  # changer pour que ce soit automatique
     infer = Infer(name="inputs", model=models, data=data, uniques=uniques,
                   log_path=path, args=args, logger=None,
                   log_neptune=True, mlops='None')
