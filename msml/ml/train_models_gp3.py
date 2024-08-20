@@ -264,9 +264,9 @@ if __name__ == '__main__':
             Integer(0, 1, 'uniform', name='n_aug'),
             Real(0, 0.5, 'uniform', name='p'),
             Real(0, 0.5, 'uniform', name='g'),
-            # Integer(1, 100, 'uniform', name='max_depth'),
-            # Real(1e-5, 1, 'uniform', name='learning_rate'),
-            # Integer(1, 100, 'uniform', name='n_estimators'),
+            # Integer(1, 10, 'uniform', name='max_depth'), # BEST WAS DEFAULT
+            Real(10, 20, 'uniform', name='early_stopping_rounds'), # 
+            # Integer(900, 1000, 'uniform', name='n_estimators'),
             # Categorical(['binary:logistic'], name='objective'),
             Categorical(['minmax2', 'l2', 'l1', 'zscore'], name="scaler"),
         ]

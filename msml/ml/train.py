@@ -116,6 +116,7 @@ class Train:
                 g = param
             else:
                 param_grid[name] = param
+        # n_aug = 0  # TODO TO REMOVE
 
         other_params = {
             'p': p, 
@@ -196,6 +197,7 @@ class Train:
             model['ms_level'] = run['ms_level'] = self.args.ms_level
             model['log'] = run['log'] = self.args.log
             model['batches'] = run['batches'] = '-'.join(self.uniques['batches'])
+            model['context'] = run['context'] = 'inference'
 
         else:
             model = None
@@ -215,40 +217,17 @@ class Train:
 
         if self.args.groupkfold:
             self.args.n_repeats = len(np.unique(all_data['batches']['all']))
-        while h < self.args.n_repeats:
-            # Combine urinespositives with blks of the same batch
-            # if all_data['inputs']['urinespositives'].shape[0] > 0:
-                # Find the batches of the urinespositives
-            #    upos_batches = np.unique(np.array([x for x in all_data['batches']['urinespositives']]))
-                # Find which of the upos_batches are blks
-            #    upos_batches_blks = [i for i, (x, l) in enumerate(zip(all_data['batches']['all'], all_data['labels']['all'])) if x in upos_batches and l == 'blanc']
-            #    all_data['inputs']['urinespositives'] = pd.concat((
-            #        all_data['inputs']['urinespositives'],
-            #        all_data['inputs']['all'].iloc[upos_batches_blks]
-            #    ))
-            #    all_data['labels']['urinespositives'] = np.concatenate((
-            #        all_data['labels']['urinespositives'],
-            #        all_data['labels']['all'][upos_batches_blks]
-            #    ))
-            #    all_data['batches']['urinespositives'] = np.concatenate((
-            #        all_data['batches']['urinespositives'],
-            #        all_data['batches']['all'][upos_batches_blks]
-            #    ))
-            #    all_data['names']['urinespositives'] = np.concatenate((
-            #        all_data['names']['urinespositives'],
-            #        all_data['names']['all'][upos_batches_blks]
-            #    ))
-                                
+        while h < self.args.n_repeats:                                
             lists['names']['posurines'] += [np.array([x.split('_')[-2] for x in all_data['names']['urinespositives']])]
             lists['batches']['posurines'] += [all_data['batches']['urinespositives']]
             if self.args.train_on == 'all':
                 if self.args.groupkfold:
                     # skf = GroupShuffleSplit(n_splits=5, random_state=seed)
-                    skf = StratifiedGroupKFold(n_splits=len(np.unique(all_data['batches']['all'])), shuffle=True, random_state=seed)
+                    skf = StratifiedGroupKFold(n_splits=len(np.unique(all_data['batches']['all'])), shuffle=True, random_state=42)
                     train_nums = np.arange(0, len(all_data['labels']['all']))
                     splitter = skf.split(train_nums, self.data['labels']['all'], all_data['batches']['all'])
                 else:
-                    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=h)
+                    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
                     train_nums = np.arange(0, len(all_data['labels']['all']))
                     splitter = skf.split(train_nums, self.data['labels']['all'], self.data['labels']['all'])
                 if h > 0 and h < self.args.n_repeats - 1:
@@ -384,6 +363,7 @@ class Train:
                 train_batches = np.concatenate([train_batches] * (n_aug + 1))
             else:
                 train_data = train_data.fillna(0)
+                train_data = train_data.values
             valid_data = valid_data.fillna(0)
             test_data = test_data.fillna(0)
 
@@ -405,7 +385,9 @@ class Train:
             if self.args.ovr:
                 m = OneVsRestClassifier(m)
             
-            m.fit(train_data, lists['classes']['train'][-1])
+            eval_set = [(valid_data.values, lists['classes']['valid'][-1])]
+
+            m.fit(train_data, lists['classes']['train'][-1], eval_set=eval_set, verbose=True)
             models += [m]
             try:
                 lists['acc']['train'] += [m.score(train_data, lists['classes']['train'][-1])]
@@ -460,7 +442,7 @@ class Train:
                         'proba': lists['proba']['test'][-1],
                         'batches': test_batches,
                         'names': all_data['names']['test']
-                    },
+                    }
                 }
             except:
                 data_list = {
@@ -477,7 +459,7 @@ class Train:
                         'preds': lists['preds']['test'][-1],
                         'batches': test_batches,
                         'names': all_data['names']['test']
-                    },
+                    }
                 }
             lists['mcc']['train'] += [MCC(lists['classes']['train'][-1], lists['preds']['train'][-1])]
             lists['mcc']['valid'] += [MCC(lists['classes']['valid'][-1], lists['preds']['valid'][-1])]
@@ -507,8 +489,13 @@ class Train:
               'h_params:', param_grid
               )
         posurines_df = None  # TODO move somewhere more logical
+
+        # Log in neptune the optimal iteration
+        if self.log_neptune:
+            model["best_iteration"] = run["best_iteration"] = np.round(np.mean([m.best_iteration for m in models]))
+
+        lists, posurines_df = self.save_confusion_matrices(all_data, lists, run)
         if np.mean(lists['mcc']['valid']) > np.mean(self.best_scores['mcc']['valid']):
-            lists, posurines_df = self.save_confusion_matrices(all_data, lists, run)
             self.save_roc_curves(lists, run)
             log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path)
             # save the features kept
@@ -539,6 +526,227 @@ class Train:
             model.stop()
 
         return 1 - np.mean(lists['mcc']['valid'])
+
+    def train_no_split(self, h_params):
+        metrics = {}
+        self.iter += 1
+        features_cutoff = None
+        param_grid = {}
+        scaler_name = 'none'
+        hparams = {}
+        for name, param in zip(self.hparams_names, h_params):
+            hparams[name] = param
+            if name == 'features_cutoff':
+                features_cutoff = param
+            elif name == 'threshold':
+                threshold = param
+            elif name == 'scaler':
+                scaler_name = param
+            elif name == 'n_aug':
+                n_aug = param
+            elif name == 'p':
+                p = param
+            elif name == 'g':
+                g = param
+            else:
+                param_grid[name] = param
+        other_params = {
+            'p': p, 
+            'g': g, 
+            'n_aug': n_aug,
+            'features_cutoff': features_cutoff,
+            'threshold': threshold,
+
+        }
+
+        lists = get_empty_lists()
+
+        all_data = {
+            'inputs': copy.deepcopy(self.data['inputs']),
+            'labels': copy.deepcopy(self.data['labels']),
+            'batches': copy.deepcopy(self.data['batches']),
+            'concs': copy.deepcopy(self.data['concs']),
+            'names': copy.deepcopy(self.data['names']),
+        }
+
+        if self.args.binary:
+            all_data['labels']['all'] = np.array(['blanc' if label=='blanc' else 'bact' for label in all_data['labels']['all']])
+        # self.unique_labels devrait disparaitre et remplace par self.uniques['labels']
+        self.unique_labels = np.array(np.unique(all_data['labels']['all']))
+        # place blancs at the end
+        blanc_class = np.argwhere(self.unique_labels == 'blanc').flatten()[0]
+        self.unique_labels = np.concatenate((['blanc'], np.delete(self.unique_labels, blanc_class)))
+        self.model_name = f'binary{self.args.binary}_{self.args.model_name}'
+        self.uniques['labels'] = self.unique_labels
+
+        not_zeros_col = remove_zero_cols(all_data['inputs']['all'], threshold)
+
+        all_data['inputs']['all'] = all_data['inputs']['all'].iloc[:, not_zeros_col]
+        all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[:, not_zeros_col]
+
+        if self.log_neptune:
+            # Create a Neptune run object
+            run = neptune.init_run(
+                project=NEPTUNE_PROJECT_NAME,
+                api_token=NEPTUNE_API_TOKEN,
+                source_files=['train.py',
+                              'dataset.py',
+                              'utils.py',
+                              'sklearn_train_nocv.py',
+                              'loggings.py',
+                              'metrics.py',
+                              "**/*.py"
+                              ],
+            )  # your credentials
+            model = neptune.init_model_version(
+                model=f'{NEPTUNE_MODEL_NAME}{self.args.model_name.upper()}{self.args.binary}',
+                project=NEPTUNE_PROJECT_NAME,
+                api_token=NEPTUNE_API_TOKEN,
+            )
+            model['hparams'] = run["hparams"] = hparams
+            model["csv_file"] = run["csv_file"] = self.args.csv_file
+            model["model_name"] = run["model_name"] = self.model_name
+            model["groupkfold"] = run["groupkfold"] = self.args.groupkfold
+            model["dataset_name"] = run["dataset_name"] = 'MSML-Bacteria'
+            model["scaler_name"] = run["scaler_name"] = scaler_name
+            model["mz_min"] = run["mz_min"] = self.args.min_mz
+            model["mz_max"] = run["mz_max"] = self.args.max_mz
+            model["rt_min"] = run["rt_min"] = self.args.min_rt
+            model["rt_max"] = run["rt_max"] = self.args.max_rt
+            model["mz_bin"] = run["mz_bin"] = self.args.mz
+            model["rt_bin"] = run["rt_bin"] = self.args.rt
+            model["path"] = run["path"] = self.log_path
+            model["concs"] = run["concs"] = self.args.concs
+            model["binary"] = run["binary"] = self.args.binary
+            model['spd'] = run['spd'] = self.args.spd
+            model['ovr'] = run['ovr'] = self.args.ovr
+            model['train_on'] = run['train_on'] = self.args.train_on
+            model['n_features'] = run['n_features'] = self.args.n_features
+            model['total_features'] = run['total_features'] = all_data['inputs']['all'].shape[1]
+            model['ms_level'] = run['ms_level'] = self.args.ms_level
+            model['log'] = run['log'] = self.args.log
+            model['batches'] = run['batches'] = '-'.join(self.uniques['batches'])
+            model['context'] = run['context'] = 'inference'
+
+        else:
+            model = None
+            run = None
+
+        all_data, scaler = scale_data(scaler_name, all_data)
+
+        # save scaler
+        os.makedirs(f'{self.log_path}/saved_models/', exist_ok=True)
+        with open(f'{self.log_path}/saved_models/{scaler_name}_scaler.pkl', 'wb') as f:
+            pickle.dump(scaler, f)
+
+        print(f'Iteration: {self.iter}')
+        models = []
+        h = 0
+        seed = 0
+
+        if self.args.groupkfold:
+            self.args.n_repeats = len(np.unique(all_data['batches']['all']))
+
+                            
+        lists['names']['posurines'] = np.array([x.split('_')[-2] for x in all_data['names']['urinespositives']])
+        lists['batches']['posurines'] = all_data['batches']['urinespositives']
+
+        lists['names']['train'] = all_data['names']['all']
+
+        lists['batches']['train'] = all_data['batches']['all']
+        lists['unique_batches']['train'] = list(np.unique(all_data['batches']['all']))
+
+        if n_aug > 0:
+            train_data = augment_data(train_data, n_aug, p, g)
+            train_data = np.nan_to_num(train_data)
+            train_labels = np.concatenate([train_labels] * (n_aug + 1))
+            train_batches = np.concatenate([train_batches] * (n_aug + 1))
+        else:
+            train_data = train_data.fillna(0)
+        valid_data = valid_data.fillna(0)
+        test_data = test_data.fillna(0)
+
+        lists['classes']['train'] = np.array([np.argwhere(l == self.unique_labels)[0][0] for l in train_labels])
+        lists['labels']['train'] = train_labels
+
+        if self.args.model_name == 'xgboost':
+            m = self.model(
+                # tree_method="hist", 
+                device='cuda'
+                )
+        else:
+            m = self.model()
+        m.set_params(**param_grid)
+        if self.args.ovr:
+            m = OneVsRestClassifier(m)
+        
+        eval_set = [(valid_data, lists['classes']['valid'][-1])]
+
+        m.fit(train_data, lists['classes']['train'][-1], eval_set=eval_set, verbose=True)
+        try:
+            lists['acc']['train'] += [m.score(train_data, lists['classes']['train'][-1])]
+            lists['preds']['train'] += [m.predict(train_data)]
+        except:
+            lists['acc']['train'] += [m.score(train_data.values, lists['classes']['train'][-1])]
+            lists['preds']['train'] += [m.predict(train_data.values)]
+
+        if all_data['inputs']['urinespositives'].shape[0] > 0:
+            try:
+                lists['preds']['posurines'] += [m.predict(all_data['inputs']['urinespositives'])]
+                try:
+                    lists['proba']['posurines'] += [m.predict_proba(all_data['inputs']['urinespositives'])]
+                except:
+                    pass
+
+            except:
+                lists['preds']['posurines'] += [m.predict(all_data['inputs']['urinespositives'].values)]
+                try:
+                    lists['proba']['posurines'] += [m.predict_proba(all_data['inputs']['urinespositives'].values)]
+                except:
+                    pass
+
+        try:
+            lists['proba']['train'] = m.predict_proba(train_data)
+        except:
+            pass
+        lists['mcc']['train'] += [MCC(lists['classes']['train'][-1], lists['preds']['train'][-1])]
+        ord_path = f"{'/'.join(self.log_path.split('/')[:-1])}/ords/"
+        os.makedirs(ord_path, exist_ok=True)
+        log_ord(self.data, self.uniques, ord_path, scaler_name, run)
+        data = copy.deepcopy(self.data)
+        metrics = log_fct(data, scaler_name, metrics)
+        log_ord(data, self.uniques2, ord_path, f'{scaler_name}_blancs', run)
+
+        posurines_df = None  # TODO move somewhere more logical
+
+        lists, posurines_df = self.save_confusion_matrices(all_data, lists, run)
+        self.save_roc_curves(lists, run)
+        log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path)
+        # save the features kept
+        with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}.pkl', 'wb') as f:
+            pickle.dump(data_list['test']['inputs'].columns, f)
+        
+        with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}.pkl', 'wb') as f:
+            pickle.dump(m, f)
+        # Save the individual scores of each sample with class, #batch
+        self.save_results_df(lists, run)
+        self.retrieve_best_scores(lists)
+        best_scores = self.save_best_model_hparams(param_grid, other_params, scaler_name, lists['unique_batches'], metrics)
+
+        if all_data['inputs']['urinespositives'].shape[0] > 0 and posurines_df is not None:
+            self.save_thresholds_curve0('posurines', posurines_df, run)
+            self.save_thresholds_curve('posurines', lists, run)
+            run[f'posurines/individual_results'].upload(
+                f'{self.log_path}/saved_models/{self.args.model_name}_posurines_individual_results.csv'
+            )
+
+        if self.log_neptune:
+            log_neptune(run, lists, best_scores)
+            run.stop()
+            model.stop()
+
+        return 1 - np.mean(lists['mcc']['valid'])
+
 
     def save_best_model_hparams(self, params, other_params, scaler_name, unique_batches, metrics):
         param_grid = {}

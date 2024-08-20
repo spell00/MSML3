@@ -77,6 +77,7 @@ class MakeTensorsMultiprocess:
         os.makedirs(f'{path}/images', exist_ok=True)
         os.makedirs(f'{path}/csv', exist_ok=True)
 
+        self.args = args
         self.bins = bins
         self.is_sparse = args.is_sparse
 
@@ -219,15 +220,16 @@ class MakeTensorsMultiprocess:
                     # Make all values 0 except the ones that are in mask
                     final[df].iloc[ii] = pd.Series([final[df].iloc[ii].values[i] if i in mask[0] else 0 for i in range(len(final[df].iloc[ii]))])
         # os.makedirs(f"{self.path}/nibabel/", exist_ok=True)
-        if self.save:
+        if self.args.save:
             # img = nib.Nifti1Image(np.stack(list(final.values())), np.eye(4))
             # img.uncache()
             # nib.save(img, f'{self.path}/nibabel/{label}.nii')
             df = np.stack(list(final.values()))
             # df = df / df.max(axis=(1, 2), keepdims=True)
             df = df / df.max()
-            _ = [self.save_images_and_csv3d(matrix, df[i], f"{label}", min_parent) for i, (min_parent, matrix) in
-                 enumerate(zip(final, list(final.values())))]
+            if self.args.save3d:
+                _ = [self.save_images_and_csv3d(matrix, df[i], f"{label}", min_parent) for i, (min_parent, matrix) in
+                    enumerate(zip(final, list(final.values())))]
             
             df = df.sum(0)
             df = df / df.max()
@@ -250,20 +252,20 @@ class MakeTensorsMultiprocess:
         return len(self.tsv_list)
 
     def save_images_and_csv3d(self, final, df, label, i):
-        os.makedirs(f"{self.path}/csv3d/{label}/", exist_ok=True)
-        os.makedirs(f"{self.path}/images3d/{label}/", exist_ok=True)
-        final.to_csv(f"{self.path}/csv3d/{label}/{label}_{i}.csv", index_label='ID')
+        os.makedirs(f"{self.path}/{self.args.run_name}/csv3d/{label}/", exist_ok=True)
+        os.makedirs(f"{self.path}/{self.args.run_name}/images3d/{label}/", exist_ok=True)
+        final.to_csv(f"{self.path}/{self.args.run_name}/csv3d/{label}/{label}_{i}.csv", index_label='ID')
         im = Image.fromarray(np.uint8(cm.gist_earth(df) * 255))
-        im.save(f"{self.path}/images3d/{label}/{label}_{i}.png")
+        im.save(f"{self.path}/{self.args.run_name}/images3d/{label}/{label}_{i}.png")
         im.close()
         del im
 
     def save_images_and_csv(self, final, df, label):
-        os.makedirs(f"{self.path}/csv/", exist_ok=True)
-        os.makedirs(f"{self.path}/images/", exist_ok=True)
-        final.to_csv(f"{self.path}/csv/{label}.csv", index_label='ID')
+        os.makedirs(f"{self.path}/{self.args.run_name}/csv/", exist_ok=True)
+        os.makedirs(f"{self.path}/{self.args.run_name}/images/", exist_ok=True)
+        final.to_csv(f"{self.path}/{self.args.run_name}/csv/{label}.csv", index_label='ID')
         im = Image.fromarray(np.uint8(cm.gist_earth(df) * 255))
-        im.save(f"{self.path}/images/{label}.png")
+        im.save(f"{self.path}/{self.args.run_name}/images/{label}.png")
         im.close()
         del im
 
@@ -465,6 +467,7 @@ if __name__ == "__main__":
     parser.add_argument("--is_sparse", type=int, default=1)
     parser.add_argument("--k", type=str, default=-1, help="Number of features to keep")
     parser.add_argument("--save", type=int, default=1, help="Save images and csvs?")
+    parser.add_argument("--save3d", type=int, default=0, help="Save images and csvs 3d?")
     parser.add_argument("--experiment", type=str, default='new_old_data')
     parser.add_argument("--resources_path", type=str, default='../../../resources',
                         help="Path to input directory")
@@ -541,12 +544,12 @@ if __name__ == "__main__":
                f"shift{args.shift}/{args.scaler}/log{args.log2}/{args.feature_selection}/"
     
     batches = [
-        "B15-06-29-2024",
-        # "B14-06-10-2024", "B13-06-05-2024", "B12-05-31-2024",
-        # "B11-05-24-2024", "B10-05-03-2024", "B9-04-22-2024",
-        # "B8-04-15-2024", 'B7-04-03-2024', 'B6-03-29-2024',
-        # 'B5-03-13-2024', 'B4-03-01-2024', 'B3-02-29-2024',
-        # 'B2-02-21-2024', 'B1-02-02-2024'
+        # "B15-06-29-2024",
+        'B1-02-02-2024', "B14-06-10-2024", "B13-06-05-2024", "B12-05-31-2024",
+        "B11-05-24-2024", "B10-05-03-2024", "B9-04-22-2024",
+        "B8-04-15-2024", 'B7-04-03-2024', 'B6-03-29-2024',
+        'B5-03-13-2024', 'B4-03-01-2024', 'B3-02-29-2024',
+        'B2-02-21-2024'
     ]
     dir_inputs = []
     for batch in batches:

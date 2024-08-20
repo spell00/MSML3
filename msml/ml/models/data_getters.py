@@ -566,6 +566,7 @@ def get_data(path, args, seed=42):
             batches = np.stack([np.argwhere(x == unique_batches).squeeze() for x in batches])
             orders = np.array([0 for _ in batches])
             matrix = matrix.iloc[:, 3:].fillna(0)
+
             if args.remove_zeros:
                 mask1 = (matrix == 0).mean(axis=0) < 0.1
                 matrix = matrix.loc[:, mask1]
@@ -878,22 +879,31 @@ def get_bacteria_images_ms2(path, args, seed=42):
     pool.close()
     pool.join()
     pool.terminate()
-    if args.log1p:
-        images = np.log1p(images)
     del pool, data_images
 
     if args.remove_zeros:
         mask1 = (matrix == 0).mean(axis=0) < 0.1
         matrix = matrix.loc[:, mask1]
+    min_max_rt = np.min([np.max(x.shape[0]) for x in images])
     min_max_mz = np.min([np.max(x.shape[1]) for x in images])
     max_mz = np.max([np.max(x) for x in images])
+    # TODO scale data after
     for i in range(len(images)):
-        images[i] = images[i][:, :min_max_mz, :] / max_mz
+        if args.log1p:
+            images[i] = np.log1p(images[i])
+        try:
+            images[i] = images[i][:min_max_rt, :min_max_mz] # / max_mz
+        except:
+            images[i] = images[i].iloc[:min_max_rt, :min_max_mz] # / max_mz
     # binarize data all data to 1 if not zero
     # for i in range(len(images)):
     #     images[i][images[i] > 0] = 1
     
-    data['inputs']['all'] = np.stack(images)
+    try:
+        data['inputs']['all'] = np.stack(images)
+    except:
+        data['inputs']['all'] = np.stack([x.values for x in images])
+    # data['inputs']['all'] = data['inputs']['all'].reshape([data['inputs']['all'].shape[0], 1, -1])
     data['names']['all'] = names.values
     data['labels']['all'] = labels.values  # .iloc[meta_pos].to_numpy()
     data['batches']['all'] = batches.values
@@ -919,6 +929,12 @@ def get_bacteria_images_ms2(path, args, seed=42):
     # for group in ['train', 'valid', 'test', 'all']:
     data['cats']['all'] = np.array(
             [np.where(x == unique_labels)[0][0] for i, x in enumerate(data['labels']['all'])])
+
+    # data['inputs']['all'] = data['inputs']['all'].reshape([
+    #     data['inputs']['all'].shape[0],
+    #     data['inputs']['all'].shape[2],
+    #     data['inputs']['all'].shape[1]
+    # ])
 
     return data, unique_labels, unique_batches
 

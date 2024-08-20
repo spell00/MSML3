@@ -193,14 +193,21 @@ def scale_data(scale, data, device='cpu'):
             for group in list(data[data_type].keys()):
                 if data[data_type][group].shape[0] > 0:
                     for i in range(data[data_type][group].shape[0]):
-                        data[data_type][group].iloc[i] /= np.max(np.abs(data[data_type][group].iloc[i]))
+                        # if dtype is pandas
+                        try:
+                            data[data_type][group].iloc[i] /= np.max(np.abs(data[data_type][group].iloc[i]))
+                        except:
+                            data[data_type][group][i] /= np.max(np.abs(data[data_type][group][i]))
 
     elif scale == 'zscore':
         for data_type in ['inputs']:
             for group in list(data[data_type].keys()):
                 if data[data_type][group].shape[0] > 0:
                     for i in range(data[data_type][group].shape[0]):
-                        data[data_type][group].iloc[i] = zscore(data[data_type][group].iloc[i])
+                        try:
+                            data[data_type][group].iloc[i] = zscore(data[data_type][group].iloc[i])
+                        except:
+                            data[data_type][group][i] = zscore(data[data_type][group][i])
 
     elif scale == 'l1_minmax':
         scaler = Pipeline([('l1', Normalizer(norm='l1')), ('minmax', MinMaxScaler())])

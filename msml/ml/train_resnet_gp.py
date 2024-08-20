@@ -41,6 +41,179 @@ import warnings
 from datetime import datetime
 # import params_gp
 from torch.nn import functional as F
+import math
+from utils import scale_data
+from torch.autograd import Function
+
+
+class ReverseLayerF(Function):
+
+    @staticmethod
+    def forward(ctx, x, alpha):
+        ctx.alpha = alpha
+
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        output = grad_output.neg() * ctx.alpha
+
+        return output, None
+
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, d_model, num_heads):
+        super(MultiHeadAttention, self).__init__()
+        # Ensure that the model dimension (d_model) is divisible by the number of heads
+        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
+        
+        # Initialize dimensions
+        self.d_model = d_model # Model's dimension
+        self.num_heads = num_heads # Number of attention heads
+        self.d_k = d_model // num_heads # Dimension of each head's key, query, and value
+        
+        # Linear layers for transforming inputs
+        self.W_q = nn.Linear(d_model, d_model) # Query transformation
+        self.W_k = nn.Linear(d_model, d_model) # Key transformation
+        self.W_v = nn.Linear(d_model, d_model) # Value transformation
+        self.W_o = nn.Linear(d_model, d_model) # Output transformation
+        
+    def scaled_dot_product_attention(self, Q, K, V, mask=None):
+        # Calculate attention scores
+        attn_scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
+        
+        # Apply mask if provided (useful for preventing attention to certain parts like padding)
+        if mask is not None:
+            attn_scores = attn_scores.masked_fill(mask == 0, -1e9)
+        
+        # Softmax is applied to obtain attention probabilities
+        attn_probs = torch.softmax(attn_scores, dim=-1)
+        
+        # Multiply by values to obtain the final output
+        output = torch.matmul(attn_probs, V)
+        return output
+        
+    def split_heads(self, x):
+        # Reshape the input to have num_heads for multi-head attention
+        batch_size, seq_length, d_model = x.size()
+        return x.view(batch_size, seq_length, self.num_heads, self.d_k).transpose(1, 2)
+        
+    def combine_heads(self, x):
+        # Combine the multiple heads back to original shape
+        batch_size, _, seq_length, d_k = x.size()
+        return x.transpose(1, 2).contiguous().view(batch_size, seq_length, self.d_model)
+        
+    def forward(self, Q, K, V, mask=None):
+        # Apply linear transformations and split heads
+        Q = self.split_heads(self.W_q(Q))
+        K = self.split_heads(self.W_k(K))
+        V = self.split_heads(self.W_v(V))
+        
+        # Perform scaled dot-product attention
+        attn_output = self.scaled_dot_product_attention(Q, K, V, mask)
+        
+        # Combine heads and apply output transformation
+        output = self.W_o(self.combine_heads(attn_output))
+        return output
+
+class CausalSelfAttention(nn.Module):
+
+    def __init__(self, num_heads: int, embed_dimension: int, bias: bool=False, is_causal: bool=False, dropout:float=0.0):
+        super().__init__()
+        assert embed_dimension % num_heads == 0
+        # key, query, value projections for all heads, but in a batch
+        self.c_attn = nn.Linear(embed_dimension, 3 * embed_dimension, bias=bias)
+        # output projection
+        self.c_proj = nn.Linear(embed_dimension, embed_dimension, bias=bias)
+        # regularization
+        self.dropout = dropout
+        self.resid_dropout = nn.Dropout(dropout)
+        self.num_heads = num_heads
+        self.embed_dimension = embed_dimension
+        # Perform causal masking
+        self.is_causal = is_causal
+
+    def forward(self, x):
+        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        query_projected = self.c_attn(x)
+
+        batch_size = query_projected.size(0)
+        embed_dim = query_projected.size(2)
+        head_dim = embed_dim // (self.num_heads * 3)
+
+        query, key, value = query_projected.chunk(3, -1)
+        query = query.view(batch_size, -1, self.num_heads, head_dim).transpose(1, 2)
+        key = key.view(batch_size, -1, self.num_heads, head_dim).transpose(1, 2)
+        value = value.view(batch_size, -1, self.num_heads, head_dim).transpose(1, 2)
+
+        if self.training:
+            dropout = self.dropout
+            is_causal = self.is_causal
+        else:
+            dropout = 0.0
+            is_causal = False
+
+        y = F.scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=dropout, is_causal=is_causal)
+        y = y.transpose(1, 2).view(batch_size, -1, self.num_heads * head_dim)
+
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+
+# Define a simple Transformer model
+class SimpleTransformer(nn.Module):
+    def __init__(self, input_dim, embed_dim, num_heads, num_layers, dropout):
+        super(SimpleTransformer, self).__init__()
+        
+        # Embedding layer
+        self.embedding = nn.Linear(input_dim, embed_dim)
+        
+        # Transformer layers
+        self.transformer = nn.Transformer(
+            d_model=embed_dim,
+            nhead=num_heads,
+            num_encoder_layers=num_layers,
+            num_decoder_layers=num_layers,
+            dim_feedforward=embed_dim * 4,
+            dropout=dropout,
+            activation='relu'
+        )
+        
+        # Output layer
+        # self.classifier = nn.Linear(embed_dim * seq_length, num_classes)
+    
+    def forward(self, x):
+        # x shape: (batch_size, seq_length, input_dim)
+        batch_size, seq_length, _ = x.shape
+        
+        # Embedding
+        x = self.embedding(x)  # Shape: (batch_size, seq_length, embed_dim)
+        
+        # Transformer expects input shape: (seq_length, batch_size, embed_dim)
+        x = x.permute(1, 0, 2)
+        
+        # Passing through transformer
+        x = self.transformer(x, x)
+        
+        # Flatten and pass through the output layer
+        x = x.permute(1, 0, 2).contiguous().view(batch_size, -1)
+        # x = self.fc(x)
+        
+        return x
+
+class CNN1D(nn.Module):
+    def __init__(self, input_dim, output_dim, kernel_size, stride, padding, dropout):
+        super(CNN1D, self).__init__()
+        self.conv1 = nn.Conv1d(in_channels=input_dim, out_channels=output_dim, kernel_size=kernel_size, stride=stride, padding=padding)
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(dropout)
+        self.adaptative_pool = nn.AdaptiveAvgPool1d(1)
+        
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.adaptative_pool(x)
+        return x
 
 class FocalLoss(nn.Module):
     """
@@ -62,18 +235,51 @@ class FocalLoss(nn.Module):
 
 class Predictor(nn.Module):
 
-    def __init__(self, n_classes: int, n_batches: int):
+    def __init__(self, model: str, n_classes: int, n_batches: int, params: dict):
         super().__init__()
         weights = ResNet18_Weights.DEFAULT
-        self.resnet18 = resnet18(weights=weights, progress=False)
-        self.resnet18 = torch.nn.Sequential(*(list(self.resnet18.children())[:-1]))
         self.classifier = nn.Linear(512, n_classes)
         self.dann_discriminator = nn.Linear(512, n_batches)
         self.transforms = weights.transforms()
+        if model == 'resnet18':
+            self.model = resnet18(weights=weights, progress=False)
+            self.model = torch.nn.Sequential(*(list(self.model.children())[:-1]))
+        elif model == 'transformer':
+            self.model = MultiHeadAttention(512, 8)
+        elif model == 'causal':
+            self.transforms = None
+            num_heads = 8
+            heads_per_dim = 64
+            embed_dimension = num_heads * heads_per_dim
+            dtype = torch.float16
+            self.model = CausalSelfAttention(num_heads=num_heads, embed_dimension=embed_dimension, bias=False, is_causal=True, dropout=0.1).to("cuda").to(dtype).eval()
+        elif model == 'simple':
+            self.transforms = None
+            # Model parameters
+            input_dim = 34
+            # embed_dim = 128
+            # num_heads = 4
+            # num_layers = 2
+            seq_length = 142
+
+            # Instantiate the model
+            self.model = SimpleTransformer(input_dim, params['embed_dim']*params['num_heads'], params['num_heads'], params['num_layers'], params['dropout']).to("cuda")
+            self.classifier = nn.Linear(params['embed_dim']*params['num_heads'] * seq_length, n_classes)
+            self.dann_discriminator = nn.Linear(params['embed_dim']*params['num_heads'] * seq_length, n_batches)
+        elif model == 'cnn1d':
+            self.transforms = None
+            self.model = CNN1D(34, 64, 3, 1, 1, params['dropout'])
+            self.classifier = nn.Linear(64, n_classes)
+            self.dann_discriminator = nn.Linear(64, n_batches)
+
+
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
-        x = self.transforms(input)
-        enc = self.resnet18(x)
+        if self.transforms is not None:
+            x = self.transforms(input)
+        else:
+            x = input
+        enc = self.model(x)
         # x = self.classifier(x.view(x.size(0), -1))
         return enc.squeeze(-1).squeeze(-1)
 
@@ -172,7 +378,15 @@ class TrainAE:
             self.n_neurons = 4704
         
         self.data, self.unique_labels, self.unique_batches = get_bacteria_images_ms2(self.args.path, args)
-        self.data = binarize_labels(self.data, self.args.controls)
+        if args.model == 'cnn1d':
+            self.data['inputs']['all'] = self.data['inputs']['all'].reshape([
+                self.data['inputs']['all'].shape[0],
+                self.data['inputs']['all'].shape[2],
+                self.data['inputs']['all'].shape[1]
+            ])
+
+        if self.args.controls != '':
+            self.data = binarize_labels(self.data, self.args.controls)
 
     def make_samples_weights(self):
         """
@@ -241,6 +455,7 @@ class TrainAE:
         lr = params['lr']
         margin = params['margin']
         dropout = params['dropout']
+        scaler_name = params['scaler']
 
         self.args.scaler = scale
         self.args.disc_b_warmup = params['disc_b_warmup']
@@ -343,6 +558,17 @@ class TrainAE:
                 "use_mapping": args.use_mapping,
                 "dataset_name": args.dataset,
                 "n_agg": args.n_agg,
+                "num_heads": params['num_heads'],
+                "embed_dim": params['embed_dim']*params['num_heads'],
+                "num_layers": params['num_layers'],
+                "dropout": params['dropout'],
+                "lr": params['lr'],
+                "wd": params['wd'],
+                "margin": params['margin'],
+                "gamma": params['gamma'],
+                "smoothing": params['smoothing'],
+                "disc_b_warmup": params['disc_b_warmup'],
+                "model": args.model
             })
         else:
             model = None
@@ -367,6 +593,7 @@ class TrainAE:
             # TODO Should not have to load the data everytime
             # if self.args.dataset == 'bacteria':
             self.data = split_images_ms2(self.data, args, seed=seed)                
+            self.data, scaler = scale_data(scaler_name, self.data)
             # else:
             #     self.data, self.unique_labels, self.unique_batches = get_data(self.args.path, args, seed=seed)
             #     self.pools = self.args.pool
@@ -427,8 +654,12 @@ class TrainAE:
                 loaders = get_images_loaders_no_pool(self.data, self.args.random_recs, 
                                                      self.samples_weights, self.args)
                 print(self.n_batches, self.n_cats)
-                ae = Predictor(n_classes=self.n_cats, 
-                                n_batches=self.n_batches).to(self.args.device)
+                ae = Predictor(
+                    model=self.args.model,
+                    n_classes=self.n_cats, 
+                    n_batches=self.n_batches,
+                    params=params
+                ).to(self.args.device)
                 # if self.args.embeddings_meta > 0:
                 #     n_meta = self.n_meta
                 # shap_ae = SHAPAutoEncoder(n_classes=self.n_cats, n_batches=self.n_batches).to(self.args.device)
@@ -436,10 +667,13 @@ class TrainAE:
                 # shap_ae.mapper.to(self.args.device)
                 loggers['logger_cm'] = SummaryWriter(f'{self.complete_log_path}/cm')
                 loggers['logger'] = SummaryWriter(f'{self.complete_log_path}/traces')
-                sceloss, celoss, mseloss, triplet_loss = self.get_losses(scale, smooth, margin, args)
-
-                optimizer_ae = get_optimizer(ae, lr, wd, optimizer_type)
-                optimizer_b = get_optimizer(ae.dann_discriminator, 1e-2, 0, optimizer_type)
+                sceloss, celoss, mseloss, self.triplet_loss = self.get_losses(scale, smooth, margin, args)
+                optimizers = {
+                    'ae': get_optimizer(ae, lr, wd, optimizer_type),
+                    'b': get_optimizer(ae.dann_discriminator, 1e-2, 0, optimizer_type)
+                }
+                # optimizer_ae = get_optimizer(ae, lr, wd, optimizer_type)
+                # optimizer_b = get_optimizer(ae.dann_discriminator, 1e-2, 0, optimizer_type)
                 values, best_values, _, best_traces = get_empty_dicts()
 
                 early_stop_counter = 0
@@ -452,10 +686,11 @@ class TrainAE:
                         break
                     lists, traces = get_empty_traces()
 
-                    closs, _, _ = self.loop('train', optimizer_ae, ae, sceloss,
-                                            loaders['train'], lists, traces, nu=1)
-
+                    closs, _, _ = self.loop('train', optimizers, ae, sceloss,
+                                            loaders['train'], lists, traces,gamma=self.gamma, nu=1)
+            
                     if torch.isnan(closs):
+                        print('\n\n\nNAN LOSS\n\n\n')
                         if self.log_mlflow:
                             mlflow.log_param('finished', 0)
                             mlflow.end_run()
@@ -467,8 +702,8 @@ class TrainAE:
                         for group in list(self.data['inputs'].keys()):
                             if group == 'all':
                                 continue
-                            closs, lists, traces = self.loop(group, optimizer_ae, ae, sceloss,
-                                                             loaders[group], lists, traces, nu=0)
+                            closs, lists, traces = self.loop(group, optimizers, ae, sceloss,
+                                                             loaders[group], lists, traces, nu=0, gamma=0)
 
                     traces = self.get_mccs(lists, traces)
                     values = log_traces(traces, values)
@@ -542,7 +777,7 @@ class TrainAE:
                             continue
                         closs, best_lists, traces = self.loop(group, None, ae, sceloss,
                                                               loaders[group], best_lists,
-                                                              traces, nu=0, mapping=False)
+                                                              traces, nu=0, gamma=0)
                 if self.log_neptune:
                     model["model"].upload(f'{self.complete_log_path}/model_{h}_state.pth')
                     model["validation/closs"].log(self.best_closs)
@@ -606,8 +841,6 @@ class TrainAE:
 
     def log_rep(self, best_lists, best_vals, best_values, traces, model, metrics, run, loggers, ae, shap_ae, h,
                 epoch):
-        # if run is None:
-        #     return None
         best_traces = self.get_mccs(best_lists, traces)
 
         self.log_predictions(best_lists, run, h)
@@ -808,7 +1041,7 @@ class TrainAE:
                 except:
                     pass
 
-    def loop(self, group, optimizer_ae, ae, celoss, loader, lists, traces, nu=1, mapping=True):
+    def loop(self, group, optimizers, ae, celoss, loader, lists, traces, gamma, nu=1):
         """
 
         Args:
@@ -826,22 +1059,23 @@ class TrainAE:
 
         """
         # If group is train and nu = 0, then it is not training. valid can also have sampling = True
-        if group in ['train', 'valid'] and nu != 0:
-            sampling = True
-        else:
-            sampling = False
+        # if group in ['train', 'valid'] and nu != 0:
+        #     sampling = True
+        # else:
+        #     sampling = False
         classif_loss = None
         for i, batch in enumerate(loader):
-            if group in ['train'] and nu != 0:
-                optimizer_ae.zero_grad()
             data, meta_inputs, names, labels, domain, to_rec, not_to_rec, pos_batch_sample, \
                 neg_batch_sample, meta_pos_batch_sample, meta_neg_batch_sample = batch
             # data[torch.isnan(data)] = 0
+            if nu == 1 and self.args.dloss == 'DANN' and group == 'train' and self.args.bdisc:
+                self.forward_discriminate(optimizers['b'], ae, celoss, data, domain)
             data = data.to(self.args.device).float()
             meta_inputs = meta_inputs.to(self.args.device).float()
             to_rec = to_rec.to(self.args.device).float()
 
             # If n_meta > 0, meta data added to inputs
+
             if self.args.n_meta > 0:
                 data = torch.cat((data, meta_inputs), 1)
                 to_rec = torch.cat((to_rec, meta_inputs), 1)
@@ -854,7 +1088,6 @@ class TrainAE:
             else:
                 preds = ae.classifier(enc)
 
-            domain_preds = ae.dann_discriminator(enc)
             try:
                 cats = to_categorical(labels.long(), self.n_cats).to(self.args.device).float()
                 classif_loss = celoss(preds, cats)
@@ -862,10 +1095,40 @@ class TrainAE:
                 cats = torch.Tensor([self.n_cats + 1 for _ in labels])
                 classif_loss = torch.Tensor([0])
 
-            # if self.args.triplet_loss and not self.args.predict_tests:
-            #     rec_loss = triplet_loss(rec, to_rec, not_to_rec)
-            # else:
-            #     rec_loss = torch.zeros(1).to(device)[0]
+            reverse = ReverseLayerF.apply(enc, 1)
+            if self.args.dloss == 'DANN':
+                domain_preds = ae.dann_discriminator(reverse)
+            else:
+                domain_preds = ae.dann_discriminator(enc)
+            if self.args.dloss not in ['revTriplet', 'inverseTriplet']:
+                dloss, domain = self.get_dloss(celoss, domain, domain_preds)
+            elif self.args.dloss == 'revTriplet':
+                pos_batch_sample = pos_batch_sample.to(self.args.device).float()
+                neg_batch_sample = neg_batch_sample.to(self.args.device).float()
+                meta_pos_batch_sample = meta_pos_batch_sample.to(self.args.device).float()
+                meta_neg_batch_sample = meta_neg_batch_sample.to(self.args.device).float()
+                if self.args.n_meta > 0:
+                    pos_batch_sample = torch.cat((pos_batch_sample, meta_pos_batch_sample), 1)
+                    neg_batch_sample = torch.cat((neg_batch_sample, meta_neg_batch_sample), 1)
+                pos_enc = ae(pos_batch_sample)
+                neg_enc = ae(neg_batch_sample)
+                dloss = self.triplet_loss(reverse,
+                                     ReverseLayerF.apply(pos_enc, 1),
+                                     ReverseLayerF.apply(neg_enc, 1)
+                                     )
+            elif self.args.dloss == 'inverseTriplet':
+                pos_batch_sample, neg_batch_sample = neg_batch_sample.to(self.args.device).float(), pos_batch_sample.to(
+                    self.args.device).float()
+                meta_pos_batch_sample, meta_neg_batch_sample = meta_neg_batch_sample.to(
+                    self.args.device).float(), meta_pos_batch_sample.to(self.args.device).float()
+                if self.args.n_meta > 0:
+                    pos_batch_sample = torch.cat((pos_batch_sample, meta_pos_batch_sample), 1)
+                    neg_batch_sample = torch.cat((neg_batch_sample, meta_neg_batch_sample), 1)
+                pos_enc = ae(pos_batch_sample)
+                neg_enc = ae(neg_batch_sample)
+                dloss = self.triplet_loss(enc, pos_enc, neg_enc)
+                # domain = domain.argmax(1)
+
 
             lists[group]['set'] += [np.array([group for _ in range(len(domain))])]
             lists[group]['domains'] += [np.array([self.unique_batches[d] for d in domain.detach().cpu().numpy()])]
@@ -900,40 +1163,65 @@ class TrainAE:
                 MCC(labels.detach().cpu().numpy(), preds.detach().cpu().numpy().argmax(1)), 3)
             ]
             if group in ['train'] and nu != 0:
-                # w = np.mean([1/self.class_weights[x] for x in lists[group]['labels'][-1]])
+                optimizers['ae'].zero_grad()
                 w = 1
-                total_loss = w * classif_loss
+                total_loss = w * classif_loss + gamma * dloss
                 try:
                     total_loss.backward()
                 except:
                     pass
                 # nn.utils.clip_grad_norm_(ae.classifier.parameters(), max_norm=1)
-                optimizer_ae.step()
+                optimizers['ae'].step()
 
         return classif_loss, lists, traces
 
-    def forward_discriminate(self, optimizer_b, ae, celoss, loader):
+    def forward_discriminate(self, optimizer_b, ae, celoss, data, domain):
         # Freezing the layers so the batch discriminator can get some knowledge independently
         # from the part where the autoencoder is trained. Only for DANN
         self.freeze_all_but_dlayers(ae)
-        sampling = True
-        for i, batch in enumerate(loader):
-            optimizer_b.zero_grad()
-            data, meta_inputs, names, labels, domain, to_rec, not_to_rec, pos_batch_sample, \
-                neg_batch_sample, meta_pos_batch_sample, meta_neg_batch_sample = batch
-            # data[torch.isnan(data)] = 0
-            data = data.to(self.args.device).float()
-            to_rec = to_rec.to(self.args.device).float()
-            with torch.no_grad():
-                enc, rec, _, kld = ae(data, to_rec, domain, sampling=sampling)
-            with torch.enable_grad():
-                domain_preds = ae.dann_discriminator(enc)
-                bclassif_loss = celoss(domain_preds,
-                                       to_categorical(domain.long(), self.n_batches).to(self.args.device).float())
-                bclassif_loss.backward()
-                optimizer_b.step()
+        optimizer_b.zero_grad()
+        # data, meta_inputs, names, labels, domain, to_rec, not_to_rec, pos_batch_sample, \
+        #     neg_batch_sample, meta_pos_batch_sample, meta_neg_batch_sample = batch
+        # data[torch.isnan(data)] = 0
+        data = data.to(self.args.device).float()
+        with torch.no_grad():
+            enc = ae(data)
+        with torch.enable_grad():
+            domain_preds = ae.dann_discriminator(enc)
+            bclassif_loss = celoss(domain_preds,
+                                    to_categorical(domain.long(), self.n_batches).to(self.args.device).float())
+            bclassif_loss.backward()
+            optimizer_b.step()
         self.unfreeze_layers(ae)
-        # return classif_loss, lists, traces
+
+    def freeze_all_but_dlayers(self, ae):
+        """
+        Freezes all layers except the batch discriminator layers
+        Args:
+            ae: AutoEncoder object. It inherits torch.nn.Module
+
+        Returns:
+            ae: The same AutoEncoder object, but with all layers frozen except the batch discriminator layers
+
+        """
+        for name, param in ae.named_parameters():
+            if 'dann_discriminator' not in name:
+                param.requires_grad = False
+        return ae
+
+    def unfreeze_layers(self, ae):
+        """
+        Unfreeze all layers
+        Args:
+            ae: AutoEncoder object. It inherits torch.nn.Module
+
+        Returns:
+            ae: The same AutoEncoder object, but with all frozen layers. Only the classifier layers are not frozen.
+
+        """
+        for param in ae.parameters():
+            param.requires_grad = True
+        return ae
 
     def get_dloss(self, celoss, domain, domain_preds):
         """
@@ -1058,9 +1346,10 @@ if __name__ == "__main__":
     parser.add_argument('--n_features', type=int, default=-1, help='')
     parser.add_argument('--triplet_dloss', type=int, default=0, help='')  # TODO no longer used
     parser.add_argument('--new_size', type=int, default=299, help='') # Use 0 for no resize
-    parser.add_argument('--path', type=str, default="resources/bacteries_2024/matrices/mz10/rt10/mzp10/rtp10/thr0.1/200spd/ms2/combat0/shift0/none/loginloop/mutual_info_classif/images", help='')
+    parser.add_argument('--path', type=str, default="resources/bacteries_2024/matrices/mz10/rt10/mzp10/rtp10/thr0.0/200spd/ms2/combat0/shift0/none/loginloop/none/all_B14-B13-B12-B11-B10-B9-B8-B7-B6-B5-B4-B3-B2-B1_gkf0_mz0-1200rt0-320_5splits/images", help='')
     parser.add_argument('--test', type=int, default=0, help='')
     parser.add_argument('--classif_loss', type=str, default='focal', help='')
+    parser.add_argument('--model', type=str, default='resnet18', help='')
 
     args = parser.parse_args()
     try:
@@ -1081,14 +1370,18 @@ if __name__ == "__main__":
     # train.train()
     # List of hyperparameters getting optimized
     parameters = [
-        {"name": "lr", "type": "range", "bounds": [1e-4, 1e-2], "log_scale": True},
+        {"name": "lr", "type": "range", "bounds": [1e-6, 1e-2], "log_scale": True},
         {"name": "wd", "type": "range", "bounds": [1e-6, 1e-2], "log_scale": True},
         {"name": "smoothing", "type": "range", "bounds": [0., 0.2]},
         {"name": "margin", "type": "range", "bounds": [0., 10.]},
         {"name": "disc_b_warmup", "type": "range", "bounds": [1, 2]},
         {"name": "dropout", "type": "range", "bounds": [0.0, 0.5]},
-        {"name": "scaler", "type": "choice", "values": ['none']},
+        {"name": "scaler", "type": "choice", "values": ['minmax2', 'none', 'zscale']},
+        {"name": "num_layers", "type": "range", "bounds": [1, 3]},
+        {"name": "num_heads", "type": "range", "bounds": [2, 10]},
+        {"name": "embed_dim", "type": "range", "bounds": [3, 300]},
     ]
+    
 
     # Some hyperparameters are not always required. They are set to a default value in Train.train()
     if args.dloss in ['revTriplet', 'revDANN', 'DANN', 'inverseTriplet', 'normae']:

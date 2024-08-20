@@ -30,8 +30,11 @@ from skopt import gp_minimize
 import matplotlib.pyplot as plt
 from dataset import get_data_infer
 from infer import Infer
+import time
 
 if __name__ == '__main__':
+    # Start timer
+    start = time.time()
     # Load data
     import argparse
     parser = argparse.ArgumentParser()
@@ -166,3 +169,7 @@ if __name__ == '__main__':
                   log_neptune=True, mlops='None')
     
     infer.infer()
+
+    # End timer
+    end = time.time()
+    print(f"Time taken: {end - start} seconds")

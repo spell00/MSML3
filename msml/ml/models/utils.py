@@ -11,7 +11,7 @@ from itertools import cycle
 from matplotlib import pyplot as plt, cm
 from sklearn.metrics import roc_auc_score, PrecisionRecallDisplay
 # from bernn.ml.train.params_gp import *
-from sklearn_train_nocv import Train
+# from sklearn_train_nocv import Train
 from skopt import gp_minimize
 from sklearn.preprocessing import label_binarize, OneHotEncoder
 
@@ -42,7 +42,7 @@ def get_optimizer(model, learning_rate, weight_decay, optimizer_type, momentum=0
                                      weight_decay=weight_decay,
                                      )
     elif optimizer_type == 'adamw':
-        optimizer = torch.optim.RAdam(params=model.parameters(),
+        optimizer = torch.optim.AdamW(params=model.parameters(),
                                       lr=learning_rate,
                                       weight_decay=weight_decay,
                                       )

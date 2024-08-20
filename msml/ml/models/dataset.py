@@ -880,9 +880,10 @@ def get_loaders_no_pool(data, random_recs, samples_weights,
 class MSImages:
     def __init__(self, args, binarize=False):
         self.path = args.path
+        self.args = args
         self.binarize = binarize
         self.new_size = args.new_size
-        if not test:
+        if not args.test:
             self.fnames = os.listdir(args.path)
         else:
             tmp = os.listdir(args.path)
@@ -1002,7 +1003,7 @@ class MSCSV:
         return len(self.fnames)
 
 
-class MS2CSV:
+class MS2CSV3D:
     def __init__(self, args, scaler):
         self.args = args
         if args.new_size == 0:
@@ -1036,7 +1037,8 @@ class MS2CSV:
                 except:
                     mat_data = transforms.Resize((self.new_size, self.new_size))(
                     torch.Tensor(mat_data).unsqueeze(0)).squeeze().detach().cpu().numpy()
-
+            else:
+                print('No resize')
             if self.scaler == 'binarize':
                 mat_data[mat_data > 0] = 1
             elif 'efd' in self.scaler:
@@ -1086,6 +1088,94 @@ class MS2CSV:
         mat_data = np.stack(mat_datas, 0)
         # except:
         #     pass
+        return mat_data.astype('float'), label, batch, plate, fname.split('.csv')[0]
+
+    def __len__(self):
+        return len(self.fnames)
+
+
+class MS2CSV:
+    def __init__(self, args, scaler):
+        self.args = args
+        if args.new_size == 0:
+            self.resize = False
+        else:
+            self.resize = True
+        self.new_size = args.new_size
+        self.scaler = scaler
+        self.fnames = []
+        if not args.test:
+            self.fnames.extend(os.listdir(f"{args.path}"))
+        else:
+            tmp = os.listdir(f"{args.path}")
+            np.random.shuffle(tmp)
+            self.fnames = tmp[:200]
+
+    def process(self, i):
+        fname = self.fnames[i]
+        # b_list = ["kox", "sau", "blk", "pae", "sep"]
+        batch = fname.split('_')[1]
+        label = fname.split('_')[0]
+        plate = fname.split('_')[2]
+        print(f"Processing sample #{i}: {fname}")
+        mat_datas = []
+        mat_data = read_csv(f"{self.args.path}/{fname}")
+        # mat_data = mat_data.T
+        if self.resize:
+            try:
+                mat_data = transforms.Resize((self.new_size, self.new_size))(
+                torch.Tensor(mat_data.values).unsqueeze(0)).squeeze().detach().cpu().numpy()
+            except:
+                mat_data = transforms.Resize((self.new_size, self.new_size))(
+                torch.Tensor(mat_data).unsqueeze(0)).squeeze().detach().cpu().numpy()
+        else:
+            print('No resize')
+        if self.scaler == 'binarize':
+            mat_data[mat_data > 0] = 1
+        elif 'efd' in self.scaler:
+            from sklearn.preprocessing import KBinsDiscretizer
+            n_bins = int(self.scaler.split('_')[1])
+            mat_data = KBinsDiscretizer(n_bins=n_bins, encode='ordinal', strategy='uniform').fit_transform(mat_data)
+            # mat_data = MinMaxScaler().fit_transform(mat_data)
+            mat_data = minmax_scale(mat_data)
+        elif 'ewd' in self.scaler:
+            from sklearn.preprocessing import KBinsDiscretizer
+            n_bins = int(self.scaler.split('_')[1])
+            mat_data = KBinsDiscretizer(n_bins=n_bins, encode='ordinal', strategy='quantile').fit_transform(mat_data)
+            mat_data = minmax_scale(mat_data)
+        elif 'kmd' in self.scaler:
+            from sklearn.preprocessing import KBinsDiscretizer
+            n_bins = int(self.scaler.split('_')[1])
+            mat_data = KBinsDiscretizer(n_bins=n_bins, encode='ordinal', strategy='kmeans').fit_transform(mat_data)
+            mat_data = minmax_scale(mat_data)
+
+        elif 'cut' in self.scaler:
+            n_bins = int(self.scaler.split('_')[1])
+            mat_data = pd.DataFrame(
+                np.stack([pd.cut(row, n_bins, labels=False, duplicates='drop', include_lowest=True) for row in
+                        mat_data.values.T]).T
+            )
+            mat_data /= mat_data.max()
+        elif 'discretizeq' in self.scaler:
+            n_bins = int(self.scaler.split('_')[1])
+            mat_data = pd.DataFrame(
+                np.stack([pd.qcut(row, n_bins, labels=False, duplicates='drop') for row in mat_data.values.T]).T
+            )
+
+            mat_data = minmax_scale(mat_data)
+        elif self.scaler == 'l2':
+            mat_data = Normalizer().fit_transform(mat_data)
+        elif self.scaler == 'l1':
+            mat_data = Normalizer('l1').fit_transform(mat_data)
+        elif self.scaler == 'minmax':
+            mat_data = minmax_scale(mat_data)
+        elif self.scaler == 'max':
+            mat_data = Normalizer('max').fit_transform(mat_data)
+        elif self.scaler == 'maxmax':
+            mat_data /= mat_data.max().max()
+
+        mat_datas += [mat_data]
+
         return mat_data.astype('float'), label, batch, plate, fname.split('.csv')[0]
 
     def __len__(self):
@@ -1263,13 +1353,22 @@ class MSDataset4(Dataset):
             ran = np.random.randint(0, max_start_crop)
             x = torch.Tensor(x)[:, ran:ran + self.crop_size]  # .to(device)
         if self.transform:
-            x = self.transform(x.transpose([1, 2, 0])).reshape(x.shape)
-            to_rec = self.transform(to_rec.transpose([1, 2, 0])).squeeze().reshape(to_rec.shape)
-            if len(not_to_rec.shape) > 1:
-                not_to_rec = self.transform(not_to_rec.transpose([1, 2, 0])).squeeze().reshape(x.shape)
-            if len(pos_batch_sample.shape) > 1:
-                pos_batch_sample = self.transform(pos_batch_sample.transpose([1, 2, 0])).squeeze().reshape(x.shape)
-                neg_batch_sample = self.transform(neg_batch_sample.transpose([1, 2, 0])).squeeze().reshape(x.shape)
+            try:
+                x = self.transform(x.transpose([1, 2, 0])).reshape(x.shape)
+                to_rec = self.transform(to_rec.transpose([1, 2, 0])).squeeze().reshape(to_rec.shape)
+                if len(not_to_rec.shape) > 1:
+                    not_to_rec = self.transform(not_to_rec.transpose([1, 2, 0])).squeeze().reshape(x.shape)
+                if len(pos_batch_sample.shape) > 1:
+                    pos_batch_sample = self.transform(pos_batch_sample.transpose([1, 2, 0])).squeeze().reshape(x.shape)
+                    neg_batch_sample = self.transform(neg_batch_sample.transpose([1, 2, 0])).squeeze().reshape(x.shape)
+            except:
+                x = self.transform(x).reshape(x.shape)
+                to_rec = self.transform(to_rec).squeeze().reshape(to_rec.shape)
+                if len(not_to_rec.shape) > 1:
+                    not_to_rec = self.transform(not_to_rec).squeeze().reshape(x.shape)
+                if len(pos_batch_sample.shape) > 1:
+                    pos_batch_sample = self.transform(pos_batch_sample).squeeze().reshape(x.shape)
+                    neg_batch_sample = self.transform(neg_batch_sample).squeeze().reshape(x.shape)
 
         if self.add_noise:
             if np.random.random() > 0.5:

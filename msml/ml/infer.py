@@ -173,6 +173,7 @@ class Infer:
             model['ms_level'] = run['ms_level'] = self.args.ms_level
             model['log'] = run['log'] = self.args.log
             model['batches'] = run['batches'] = '-'.join(self.uniques['batches'])
+            model['context'] = run['context'] = 'inference'
 
         else:
             model = None
