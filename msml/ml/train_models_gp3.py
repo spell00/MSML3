@@ -64,6 +64,7 @@ if __name__ == '__main__':
     parser.add_argument("--min_rt", type=int, default=0)
     parser.add_argument("--max_rt", type=int, default=1000)
     parser.add_argument("--low_ram", type=int, default=0)
+    parser.add_argument("--remove_bad_samples", type=int, default=0)
 
     args = parser.parse_args()
     if args.mz < 1:
@@ -264,11 +265,11 @@ if __name__ == '__main__':
             Integer(0, 1, 'uniform', name='n_aug'),
             Real(0, 0.5, 'uniform', name='p'),
             Real(0, 0.5, 'uniform', name='g'),
-            # Integer(1, 10, 'uniform', name='max_depth'), # BEST WAS DEFAULT
+            Integer(5, 9, 'uniform', name='max_depth'), # BEST WAS DEFAULT
             Real(10, 20, 'uniform', name='early_stopping_rounds'), # 
-            # Integer(900, 1000, 'uniform', name='n_estimators'),
+            Integer(500, 600, 'uniform', name='n_estimators'),
             # Categorical(['binary:logistic'], name='objective'),
-            Categorical(['minmax2', 'l2', 'l1', 'zscore'], name="scaler"),
+            Categorical(['minmax2', 'l2', 'zscore'], name="scaler"),
         ]
     hparams_names = [x.name for x in space]
     train = Train(name="inputs", model=cfr, data=data, uniques=uniques,

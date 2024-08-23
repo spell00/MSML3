@@ -26,6 +26,12 @@ import matplotlib.pyplot as plt
 # import pipeline from sklearn
 from sklearn.pipeline import Pipeline
 
+import sys
+
+def get_size_in_mb(obj):
+    size_in_bytes = sys.getsizeof(obj)
+    size_in_mb = size_in_bytes / (1024 * 1024)
+    return size_in_mb
 
 class Train:
     def __init__(self, name, model, data, uniques, hparams_names,
@@ -197,7 +203,7 @@ class Train:
             model['ms_level'] = run['ms_level'] = self.args.ms_level
             model['log'] = run['log'] = self.args.log
             model['batches'] = run['batches'] = '-'.join(self.uniques['batches'])
-            model['context'] = run['context'] = 'inference'
+            model['context'] = run['context'] = 'train'
 
         else:
             model = None
@@ -211,7 +217,8 @@ class Train:
             pickle.dump(scaler, f)
 
         print(f'Iteration: {self.iter}')
-        models = []
+        # models = []
+        best_iteration = []
         h = 0
         seed = 0
 
@@ -388,7 +395,9 @@ class Train:
             eval_set = [(valid_data.values, lists['classes']['valid'][-1])]
 
             m.fit(train_data, lists['classes']['train'][-1], eval_set=eval_set, verbose=True)
-            models += [m]
+            # models += [m]
+            self.dump_model(h, m, scaler_name, lists)
+            best_iteration += [m.best_iteration]
             try:
                 lists['acc']['train'] += [m.score(train_data, lists['classes']['train'][-1])]
                 lists['preds']['train'] += [m.predict(train_data)]
@@ -492,7 +501,8 @@ class Train:
 
         # Log in neptune the optimal iteration
         if self.log_neptune:
-            model["best_iteration"] = run["best_iteration"] = np.round(np.mean([m.best_iteration for m in models]))
+            model["best_iteration"] = run["best_iteration"] = np.round(np.mean([x for x in best_iteration]))
+            model["model_size"] = run["model_size"] = get_size_in_mb(m)
 
         lists, posurines_df = self.save_confusion_matrices(all_data, lists, run)
         if np.mean(lists['mcc']['valid']) > np.mean(self.best_scores['mcc']['valid']):
@@ -502,7 +512,7 @@ class Train:
             with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}.pkl', 'wb') as f:
                 pickle.dump(data_list['test']['inputs'].columns, f)
             
-            self.dump_models(models, scaler_name, lists)
+            self.keep_models(scaler_name)
             # Save the individual scores of each sample with class, #batch
             self.save_results_df(lists, run)
             self.retrieve_best_scores(lists)
@@ -513,6 +523,8 @@ class Train:
                 'ari': None,
                 'ami': None,
             }
+        self.remove_models(scaler_name)
+
         if all_data['inputs']['urinespositives'].shape[0] > 0 and posurines_df is not None:
             self.save_thresholds_curve0('posurines', posurines_df, run)
             self.save_thresholds_curve('posurines', lists, run)
@@ -638,15 +650,13 @@ class Train:
         os.makedirs(f'{self.log_path}/saved_models/', exist_ok=True)
         with open(f'{self.log_path}/saved_models/{scaler_name}_scaler.pkl', 'wb') as f:
             pickle.dump(scaler, f)
+        with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}.pkl', 'wb') as f:
+            pickle.dump(all_data['inputs']['all'].columns, f)
 
         print(f'Iteration: {self.iter}')
-        models = []
-        h = 0
-        seed = 0
 
         if self.args.groupkfold:
             self.args.n_repeats = len(np.unique(all_data['batches']['all']))
-
                             
         lists['names']['posurines'] = np.array([x.split('_')[-2] for x in all_data['names']['urinespositives']])
         lists['batches']['posurines'] = all_data['batches']['urinespositives']
@@ -655,16 +665,17 @@ class Train:
 
         lists['batches']['train'] = all_data['batches']['all']
         lists['unique_batches']['train'] = list(np.unique(all_data['batches']['all']))
+        lists['labels']['train'] = all_data['labels']['all']
 
         if n_aug > 0:
-            train_data = augment_data(train_data, n_aug, p, g)
+            train_data = augment_data(all_data['inputs']['all'], n_aug, p, g)
             train_data = np.nan_to_num(train_data)
-            train_labels = np.concatenate([train_labels] * (n_aug + 1))
-            train_batches = np.concatenate([train_batches] * (n_aug + 1))
+            train_labels = np.concatenate([lists['labels']['train']] * (n_aug + 1))
+            train_batches = np.concatenate([lists['batches']['train']] * (n_aug + 1))
         else:
-            train_data = train_data.fillna(0)
-        valid_data = valid_data.fillna(0)
-        test_data = test_data.fillna(0)
+            train_data = all_data['inputs']['all'].fillna(0)
+            train_labels = lists['labels']['train']
+            train_batches = lists['batches']['train']
 
         lists['classes']['train'] = np.array([np.argwhere(l == self.unique_labels)[0][0] for l in train_labels])
         lists['labels']['train'] = train_labels
@@ -679,29 +690,27 @@ class Train:
         m.set_params(**param_grid)
         if self.args.ovr:
             m = OneVsRestClassifier(m)
-        
-        eval_set = [(valid_data, lists['classes']['valid'][-1])]
 
-        m.fit(train_data, lists['classes']['train'][-1], eval_set=eval_set, verbose=True)
+        m.fit(train_data, lists['classes']['train'], verbose=True)
         try:
-            lists['acc']['train'] += [m.score(train_data, lists['classes']['train'][-1])]
-            lists['preds']['train'] += [m.predict(train_data)]
+            lists['acc']['train'] = m.score(train_data, lists['classes']['train'])
+            lists['preds']['train'] = m.predict(train_data)
         except:
-            lists['acc']['train'] += [m.score(train_data.values, lists['classes']['train'][-1])]
-            lists['preds']['train'] += [m.predict(train_data.values)]
+            lists['acc']['train'] = m.score(train_data.values, lists['classes']['train'])
+            lists['preds']['train'] = m.predict(train_data.values)
 
         if all_data['inputs']['urinespositives'].shape[0] > 0:
             try:
-                lists['preds']['posurines'] += [m.predict(all_data['inputs']['urinespositives'])]
+                lists['preds']['posurines'] = m.predict(all_data['inputs']['urinespositives'])
                 try:
-                    lists['proba']['posurines'] += [m.predict_proba(all_data['inputs']['urinespositives'])]
+                    lists['proba']['posurines'] = m.predict_proba(all_data['inputs']['urinespositives'])
                 except:
                     pass
 
             except:
-                lists['preds']['posurines'] += [m.predict(all_data['inputs']['urinespositives'].values)]
+                lists['preds']['posurines'] = m.predict(all_data['inputs']['urinespositives'].values)
                 try:
-                    lists['proba']['posurines'] += [m.predict_proba(all_data['inputs']['urinespositives'].values)]
+                    lists['proba']['posurines'] = m.predict_proba(all_data['inputs']['urinespositives'].values)
                 except:
                     pass
 
@@ -709,44 +718,15 @@ class Train:
             lists['proba']['train'] = m.predict_proba(train_data)
         except:
             pass
-        lists['mcc']['train'] += [MCC(lists['classes']['train'][-1], lists['preds']['train'][-1])]
+        lists['mcc']['train'] = MCC(lists['classes']['train'], lists['preds']['train'])
         ord_path = f"{'/'.join(self.log_path.split('/')[:-1])}/ords/"
         os.makedirs(ord_path, exist_ok=True)
         log_ord(self.data, self.uniques, ord_path, scaler_name, run)
         data = copy.deepcopy(self.data)
         metrics = log_fct(data, scaler_name, metrics)
         log_ord(data, self.uniques2, ord_path, f'{scaler_name}_blancs', run)
-
-        posurines_df = None  # TODO move somewhere more logical
-
-        lists, posurines_df = self.save_confusion_matrices(all_data, lists, run)
-        self.save_roc_curves(lists, run)
-        log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path)
-        # save the features kept
-        with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}.pkl', 'wb') as f:
-            pickle.dump(data_list['test']['inputs'].columns, f)
-        
-        with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}.pkl', 'wb') as f:
-            pickle.dump(m, f)
-        # Save the individual scores of each sample with class, #batch
-        self.save_results_df(lists, run)
-        self.retrieve_best_scores(lists)
-        best_scores = self.save_best_model_hparams(param_grid, other_params, scaler_name, lists['unique_batches'], metrics)
-
-        if all_data['inputs']['urinespositives'].shape[0] > 0 and posurines_df is not None:
-            self.save_thresholds_curve0('posurines', posurines_df, run)
-            self.save_thresholds_curve('posurines', lists, run)
-            run[f'posurines/individual_results'].upload(
-                f'{self.log_path}/saved_models/{self.args.model_name}_posurines_individual_results.csv'
-            )
-
-        if self.log_neptune:
-            log_neptune(run, lists, best_scores)
-            run.stop()
-            model.stop()
-
-        return 1 - np.mean(lists['mcc']['valid'])
-
+        self.dump_model(0, m, scaler_name, None)
+        self.keep_models(scaler_name)
 
     def save_best_model_hparams(self, params, other_params, scaler_name, unique_batches, metrics):
         param_grid = {}
@@ -1181,6 +1161,25 @@ class Train:
             for thres in thresholds:
                 f.write(f'{thres},{np.mean(accs[thres])},{np.std(accs[thres])},{np.mean(mccs[thres])},{np.std(mccs[thres])},{np.mean(proportion_predicted[thres])},{np.std(proportion_predicted[thres])}\n')
 
+    def keep_models(self, scaler_name):
+        """
+        Remove the tmp from the name if the models are to be kept because the best yet
+        """
+        for f in os.listdir(f'{self.log_path}/saved_models/'):
+            if f.startswith(f'{self.args.model_name}_{scaler_name}') and f.endswith('tmp.pkl'):
+                os.rename(f'{self.log_path}/saved_models/{f}', f'{self.log_path}/saved_models/{f[:-8]}.pkl')
+                # os.rename(f'{self.log_path}/saved_models/{f[:-8]}_train_indices_tmp.pkl', f'{self.log_path}/saved_models/{f[:-8]}_train_indices.pkl')
+                # os.rename(f'{self.log_path}/saved_models/{f[:-8]}_valid_indices_tmp.pkl', f'{self.log_path}/saved_models/{f[:-8]}_valid_indices.pkl')
+                # os.rename(f'{self.log_path}/saved_models/{f[:-8]}_test_indices_tmp.pkl', f'{self.log_path}/saved_models/{f[:-8]}_test_indices.pkl')
+
+    def remove_models(self, scaler_name):
+        """
+        Remove all models saved with the given scaler_name
+        """
+        for f in os.listdir(f'{self.log_path}/saved_models/'):
+            if f.startswith(f'{self.args.model_name}_{scaler_name}') and f.endswith('tmp.pkl'):
+                os.remove(f'{self.log_path}/saved_models/{f}')
+
     def dump_models(self, models, scaler_name, lists):
         # Save unique labels
         with open(f'{self.log_path}/saved_models/unique_labels.json', "w") as read_file:
@@ -1196,6 +1195,23 @@ class Train:
             with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_valid_indices.pkl', 'wb') as f:
                 pickle.dump(lists['inds']['valid'][i], f)
             with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_test_indices.pkl', 'wb') as f:
+                pickle.dump(lists['inds']['test'][i], f)
+
+    def dump_model(self, i, m, scaler_name, lists):
+        # Save unique labels
+        with open(f'{self.log_path}/saved_models/unique_labels.json', "w") as read_file:
+            json.dump(self.unique_labels.tolist(), read_file)
+
+        # save model
+        with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_tmp.pkl', 'wb') as f:
+            pickle.dump(m, f)
+        if lists is not None:
+            # save indices
+            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_train_indices_tmp.pkl', 'wb') as f:
+                pickle.dump(lists['inds']['train'][i], f)
+            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_valid_indices_tmp.pkl', 'wb') as f:
+                pickle.dump(lists['inds']['valid'][i], f)
+            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_test_indices_tmp.pkl', 'wb') as f:
                 pickle.dump(lists['inds']['test'][i], f)
 
     def retrieve_best_scores(self, lists):

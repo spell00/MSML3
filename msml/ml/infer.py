@@ -87,6 +87,198 @@ class Infer:
                 'rt_bin': self.args.rt,
             }
 
+    def infer_no_split(self):
+        metrics = {}
+        self.iter += 1
+        features_cutoff = None
+        param_grid = {}
+        scaler_name = self.args.scaler_name
+        hparams = {}
+
+        lists = get_empty_lists()
+
+        all_data = {
+            'inputs': copy.deepcopy(self.data['inputs']),
+            'labels': copy.deepcopy(self.data['labels']),
+            'batches': copy.deepcopy(self.data['batches']),
+            'concs': copy.deepcopy(self.data['concs']),
+            'names': copy.deepcopy(self.data['names']),
+        }
+
+        if self.args.binary:
+            all_data['labels']['all'] = np.array(['blanc' if label=='blanc' else 'bact' for label in all_data['labels']['all']])
+        # self.unique_labels devrait disparaitre et remplace par self.uniques['labels']
+        # import array of columns from columns_after_threshold.pkl
+        with open(f'{self.args.exp_name}/unique_labels.json', 'rb') as f:
+            self.unique_labels = json.load(f)
+            self.unique_labels = np.array(self.unique_labels)
+        self.model_name = f'binary{self.args.binary}_{self.args.model_name}'
+        self.uniques['labels'] = self.unique_labels
+        all_data, scaler = scale_data(scaler_name, all_data)
+
+        # import array of columns from columns_after_threshold.pkl
+        with open(f'{self.args.exp_name}/columns_after_threshold_{self.args.scaler_name}.pkl', 'rb') as f:
+            columns = pickle.load(f)
+
+        all_data['inputs']['all'] = all_data['inputs']['all'][columns]
+        all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'][columns]
+        all_data['inputs']['test'] = all_data['inputs']['test'][columns]
+
+        all_data, scaler = scale_data(scaler_name, all_data)
+
+
+        if self.log_neptune:
+            # Create a Neptune run object
+            run = neptune.init_run(
+                project=NEPTUNE_PROJECT_NAME,
+                api_token=NEPTUNE_API_TOKEN,
+                source_files=['train.py',
+                              'dataset.py',
+                              'utils.py',
+                              'sklearn_train_nocv.py',
+                              'loggings.py',
+                              'metrics.py',
+                              "**/*.py"
+                              ],
+            )  # your credentials
+            if 'inference' in self.args.model_name:
+                name = self.args.model_name.split('_')[0]
+            else:
+                name = self.args.model_name
+            model = neptune.init_model_version(
+                model=f'{NEPTUNE_MODEL_NAME}{name}{self.args.binary}',
+                project=NEPTUNE_PROJECT_NAME,
+                api_token=NEPTUNE_API_TOKEN,
+            )
+            model['hparams'] = run["hparams"] = hparams
+            model["csv_file"] = run["csv_file"] = self.args.csv_file
+            model["model_name"] = run["model_name"] = self.model_name
+            model["groupkfold"] = run["groupkfold"] = self.args.groupkfold
+            model["dataset_name"] = run["dataset_name"] = 'MSML-Bacteria'
+            model["scaler_name"] = run["scaler_name"] = scaler_name
+            model["mz_min"] = run["mz_min"] = self.args.min_mz
+            model["mz_max"] = run["mz_max"] = self.args.max_mz
+            model["rt_min"] = run["rt_min"] = self.args.min_rt
+            model["rt_max"] = run["rt_max"] = self.args.max_rt
+            model["mz_bin"] = run["mz_bin"] = self.args.mz
+            model["rt_bin"] = run["rt_bin"] = self.args.rt
+            model["path"] = run["path"] = self.log_path
+            model["concs"] = run["concs"] = self.args.concs
+            model["binary"] = run["binary"] = self.args.binary
+            model['spd'] = run['spd'] = self.args.spd
+            model['ovr'] = run['ovr'] = self.args.ovr
+            model['train_on'] = run['train_on'] = self.args.train_on
+            model['n_features'] = run['n_features'] = self.args.n_features
+            model['total_features'] = run['total_features'] = all_data['inputs']['all'].shape[1]
+            model['ms_level'] = run['ms_level'] = self.args.ms_level
+            model['log'] = run['log'] = self.args.log
+            model['batches'] = run['batches'] = '-'.join(self.uniques['batches'])
+            model['context'] = run['context'] = 'inference'
+
+        else:
+            model = None
+            run = None
+
+
+        print(f'Iteration: {self.iter}')
+        # models = []
+        # h = 0
+        # seed = 0
+
+        lists['names']['posurines'] += [np.array([x.split('_')[-2] for x in all_data['names']['urinespositives']])]
+        lists['batches']['posurines'] += [all_data['batches']['urinespositives']]
+
+        lists['names']['test'] = all_data['names']['all']
+
+        lists['batches']['test'] = all_data['batches']['all']
+        lists['unique_batches']['test'] = list(np.unique(all_data['batches']['all']))
+
+        test_data = all_data['inputs']['all'].fillna(0)
+
+        lists['classes']['test'] = np.array([np.argwhere(l == self.unique_labels)[0][0] for l in all_data['labels']['all']])
+        lists['labels']['test'] = all_data['labels']['all']
+
+        try:
+            lists['proba']['test'] = self.model.predict_proba(test_data)
+            # Take the highest proba to make a pred
+            lists['preds']['test'] = np.argmax(lists['proba']['test'], axis=1)
+
+        except:
+            lists['preds']['test'] = self.model.predict(test_data.values)
+            # take the mode of the predictions
+            lists['preds']['test'] = stats.mode(lists['preds']['test'])
+
+        if all_data['inputs']['urinespositives'].shape[0] > 0:
+            try:
+                lists['preds']['posurines'] = m.predict(all_data['inputs']['urinespositives'])
+                try:
+                    lists['proba']['posurines'] = m.predict_proba(all_data['inputs']['urinespositives'])
+                except:
+                    pass
+                lists['mcc']['posurines'] = MCC(lists['classes']['posurines'][-1], lists['preds']['posurines'])
+                lists['acc']['posurines'] = ACC(lists['classes']['posurines'][-1], lists['preds']['posurines'])
+
+            except:
+                lists['preds']['posurines'] = m.predict(all_data['inputs']['urinespositives'].values)
+                try:
+                    lists['proba']['posurines'] = m.predict_proba(all_data['inputs']['urinespositives'].values)
+                except:
+                    pass
+                lists['mcc']['posurines'] = MCC(lists['classes']['posurines'][-1], lists['preds']['posurines'][-1])
+                lists['acc']['posurines'] = ACC(lists['classes']['posurines'][-1], lists['preds']['posurines'][-1])
+            
+        try:
+            data_list = {
+                'test': {
+                    'inputs': test_data,
+                    'labels': lists['classes']['test'][-1],
+                    'preds': lists['preds']['test'][-1],
+                    'proba': lists['proba']['test'][-1],
+                    'batches': all_data['batches']['all'],
+                    'names': all_data['names']['test']
+                },
+            }
+        except:
+            data_list = {
+                'test': {
+                    'inputs': test_data,
+                    'labels': lists['classes']['test'][-1],
+                    'preds': lists['preds']['test'][-1],
+                    'batches': all_data['batches']['all'],
+                    'names': all_data['names']['test']
+                },
+            }
+        lists['mcc']['test'] = MCC(lists['classes']['test'], lists['preds']['test'])
+        lists['acc']['test'] = ACC(lists['classes']['test'], lists['preds']['test'])
+
+        # TODO all_data and self.data and data are all messed up
+        self.data['inputs']['all'] = all_data['inputs']['all']
+        self.data['inputs']['urinespositives'] = all_data['inputs']['urinespositives']
+        self.data['inputs']['test'] = all_data['inputs']['test']
+
+        ord_path = f"{'/'.join(self.log_path.split('/')[:-1])}/ords/"
+        os.makedirs(ord_path, exist_ok=True)
+        log_ord(self.data, self.uniques, ord_path, scaler_name, run)
+        data = copy.deepcopy(self.data)
+        metrics = log_fct(data, scaler_name, metrics)
+        log_ord(data, self.uniques2, ord_path, f'{scaler_name}_blancs', run)
+
+        print(lists['mcc']['valid'])
+        print('test_acc:', np.mean(lists['acc']['test']), \
+              'test_mcc:', np.mean(lists['mcc']['test']), \
+              'scaler:', scaler_name,
+              'h_params:', param_grid
+              )
+        lists = self.save_confusion_matrices(lists, run)
+        self.save_roc_curves(lists, run)
+
+        self.save_result_df(lists, run)
+
+        if self.log_neptune:
+            log_neptune(run, lists, None)
+            run.stop()
+            model.stop()
+
     def infer(self):
         metrics = {}
         self.iter += 1
@@ -472,6 +664,43 @@ class Infer:
         # plot_bars(self.args, run, self.unique_labels)
         
 
+    def save_result_df(self, lists, run):
+        if len(lists['proba']['test']) > 0:
+            df_test = pd.DataFrame(
+                {
+                    'classes': lists['classes']['test'],
+                    'labels': lists['labels']['test'],
+                    'batches': lists['batches']['test'],
+                    'preds': lists['preds']['test'],
+                    'proba': lists['proba']['test'].max(1),
+                    'names': lists['names']['test']
+                }
+            )
+            for i, label in enumerate(self.unique_labels):
+                df_test[label] = lists['proba']['test'][:, i]
+                
+        else:
+            df_test = pd.DataFrame(
+                {
+                    'classes': lists['classes']['test'],
+                    'labels': lists['labels']['test'],
+                    'batches': lists['batches']['test'],
+                    'preds': lists['preds']['test'],
+                    'names': lists['names']['test']
+                }
+            )
+
+        df_test.loc[:, 'preds'] = [
+            self.unique_labels[l] for l in df_test.loc[:, 'preds'].to_numpy()
+        ]
+        os.makedirs(f'{self.log_path}/saved_models', exist_ok=True)
+        df_test.to_csv(f'{self.log_path}/saved_models/{self.args.model_name}_test_individual_results.csv')
+        run[f'test/individual_results'].upload(f'{self.log_path}/saved_models/{self.args.model_name}_test_individual_results.csv')
+        self.save_thresholds_curve('test', lists, run)
+        self.save_thresholds_curve0('test', df_test, run)
+        # plot_bars(self.args, run, self.unique_labels)
+        
+
     def save_roc_curves(self, lists, run):
         try:
             self.best_roc_test = plot_roc(lists['proba']['test'], lists['classes']['test'], self.unique_labels,
@@ -586,23 +815,13 @@ class Infer:
         
     def save_confusion_matrices(self, lists, run):
         relevant_samples = []
-        # posurines_df = self.make_predictions(all_data, lists, run)
-        # relevant_samples = [i for i, l in enumerate(posurines_df.loc[:, 'labels'].to_numpy()) if l in self.unique_labels]
-        # if len(relevant_samples) > 0:
-        #     posurines_df = posurines_df.iloc[relevant_samples]
-        #     posurines_classes = [int(np.argwhere(l == self.unique_labels).flatten()) for l in posurines_df.loc[:, 'labels'].to_numpy()]
-        #     posurines_preds = [int(np.argwhere(l == self.unique_labels).flatten()) for l in posurines_df.loc[:, 'preds'].to_numpy()]
-        #     lists[f'acc']['posurines'] = [ACC(posurines_preds, posurines_classes)]
-        #     lists[f'mcc']['posurines'] = [MCC(posurines_preds, posurines_classes)]
-        #     lists['classes']['posurines'] = [posurines_classes]
-        #     lists['preds']['posurines'] = [posurines_preds]
         if len(relevant_samples) > 0:
             groups = ['test', 'posurines']
         else:
             groups = ['test']
         for group in groups:
-            fig = get_confusion_matrix(np.concatenate(lists['classes'][group]), 
-                                        np.concatenate(lists['preds'][group]), 
+            fig = get_confusion_matrix(lists['classes'][group], 
+                                        lists['preds'][group], 
                                         self.unique_labels)
             save_confusion_matrix(fig, 
                                     f"{self.log_path}/confusion_matrices/" 

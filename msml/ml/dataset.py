@@ -303,15 +303,17 @@ def get_data(path, args, seed=42):
                 matrix = matrix.loc[:, top_features.iloc[:, 0].values[:args.n_features]]
             else:
                 matrix = matrix.iloc[:, :args.n_features]
-            # if a file named bad_samples.csv in resources folder, remove those samples
-            if os.path.exists(f"resources/bad_samples.csv"):
-                bad_samples = pd.read_csv(f"resources/bad_samples.csv", header=None).values.squeeze()
-                mask = np.array([x not in bad_samples for x in names])
-                matrix = matrix.loc[mask]
-                names = names[mask]
-                labels = labels[mask]
-                batches = batches[mask]
-                orders = orders[mask]
+            if args.remove_bad_samples:
+                # if a file named bad_samples.csv in resources folder, remove those samples
+                print("Removing bad samples")
+                if os.path.exists(f"resources/bad_samples.csv"):
+                    bad_samples = pd.read_csv(f"resources/bad_samples.csv", header=None).values.squeeze()
+                    mask = np.array([x not in bad_samples for x in names])
+                    matrix = matrix.loc[mask]
+                    names = names[mask]
+                    labels = labels[mask]
+                    batches = batches[mask]
+                    orders = orders[mask]
             if args.remove_zeros:
                 mask1 = (matrix == 0).mean(axis=0) < 0.1
                 matrix = matrix.loc[:, mask1]
