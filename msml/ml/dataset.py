@@ -281,6 +281,7 @@ def get_data(path, args, seed=42):
                 matrix = read_csv_low_ram(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
             else:
                 matrix = read_csv(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
+            matrix.index = names = matrix.iloc[:, 0]
             names = matrix.iloc[:, 0]
             labels = matrix.iloc[:, 1]
 
@@ -309,11 +310,23 @@ def get_data(path, args, seed=42):
                 if os.path.exists(f"resources/bad_samples.csv"):
                     bad_samples = pd.read_csv(f"resources/bad_samples.csv", header=None).values.squeeze()
                     mask = np.array([x not in bad_samples for x in names])
+                    notmask = np.array([x in bad_samples for x in names])
+                    removed = np.array([x for x in names[notmask] if x in bad_samples])
+
+                    # assert len(removed) == len(bad_samples) - 2  # 2 samples are in B15 which is not used
+
                     matrix = matrix.loc[mask]
                     names = names[mask]
                     labels = labels[mask]
                     batches = batches[mask]
                     orders = orders[mask]
+                    concs = concs[mask]
+                    manips = manips[mask]
+                    urines = urines[mask]
+
+                    print(f"Removed {removed}")
+                    assert len(matrix) == len(names) == len(labels) == len(batches) == len(orders) == len(concs) == len(manips) == len(urines)
+                    
             if args.remove_zeros:
                 mask1 = (matrix == 0).mean(axis=0) < 0.1
                 matrix = matrix.loc[:, mask1]

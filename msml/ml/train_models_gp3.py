@@ -46,10 +46,10 @@ if __name__ == '__main__':
     parser.add_argument('--train_on', type=str, default='all')
     parser.add_argument('--csv_file', type=str, default='inputs')
     parser.add_argument('--ovr', type=int, default=1)
-    parser.add_argument('--mz', type=int, default=10)
-    parser.add_argument('--rt', type=int, default=10)
-    parser.add_argument('--mzp', type=int, default=10)
-    parser.add_argument('--rtp', type=int, default=10)
+    parser.add_argument('--mz', type=float, default=10)
+    parser.add_argument('--rt', type=float, default=10)
+    parser.add_argument('--mzp', type=float, default=10)
+    parser.add_argument('--rtp', type=float, default=10)
     parser.add_argument('--threshold', type=float, default=0.1)
     parser.add_argument('--spd', type=int, default=200)
     parser.add_argument('--ms_level', type=int, default=2)
@@ -150,7 +150,12 @@ if __name__ == '__main__':
     data['urines']['all'] = data['urines']['all'][mask2]
     data['manips']['all'] = data['manips']['all'][mask2]
     data['concs']['all'] = data['concs']['all'][mask2]
-    
+
+    # TODO Assert that no concentration is left that should not
+    try:
+        assert len(np.unique(data['concs']['all'])) == len(concs)
+    except:
+        raise ValueError(f'Problem with concentrations: Should have: {concs} but got {np.unique(data["concs"]["all"])}')
     path = f'results/multi/mz{args.mz}/rt{args.rt}/ms{args.ms_level}/{args.spd}spd/thr{args.threshold}/' \
            f'{args.train_on}/{args.exp_name}/{args.model_name}/'
 

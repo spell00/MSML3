@@ -123,7 +123,7 @@ class Train:
             else:
                 param_grid[name] = param
         # n_aug = 0  # TODO TO REMOVE
-
+        param_grid['threshold'] = 0
         other_params = {
             'p': p, 
             'g': g, 
@@ -204,6 +204,7 @@ class Train:
             model['log'] = run['log'] = self.args.log
             model['batches'] = run['batches'] = '-'.join(self.uniques['batches'])
             model['context'] = run['context'] = 'train'
+            model['remove_bad_samples'] = run['remove_bad_samples'] = self.args.remove_bad_samples
 
         else:
             model = None
@@ -213,8 +214,10 @@ class Train:
 
         # save scaler
         os.makedirs(f'{self.log_path}/saved_models/', exist_ok=True)
-        with open(f'{self.log_path}/saved_models/{scaler_name}_scaler.pkl', 'wb') as f:
+        with open(f'{self.log_path}/saved_models/scaler_{scaler_name}_tmp.pkl', 'wb') as f:
             pickle.dump(scaler, f)
+        with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl', 'wb') as f:
+            pickle.dump(all_data['inputs']['all'].columns, f)
 
         print(f'Iteration: {self.iter}')
         # models = []
@@ -395,7 +398,7 @@ class Train:
             eval_set = [(valid_data.values, lists['classes']['valid'][-1])]
 
             m.fit(train_data, lists['classes']['train'][-1], eval_set=eval_set, verbose=True)
-            # models += [m]
+
             self.dump_model(h, m, scaler_name, lists)
             best_iteration += [m.best_iteration]
             try:
@@ -509,7 +512,7 @@ class Train:
             self.save_roc_curves(lists, run)
             log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path)
             # save the features kept
-            with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}.pkl', 'wb') as f:
+            with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl', 'wb') as f:
                 pickle.dump(data_list['test']['inputs'].columns, f)
             
             self.keep_models(scaler_name)
@@ -523,7 +526,7 @@ class Train:
                 'ari': None,
                 'ami': None,
             }
-        self.remove_models(scaler_name)
+            self.remove_models(scaler_name)
 
         if all_data['inputs']['urinespositives'].shape[0] > 0 and posurines_df is not None:
             self.save_thresholds_curve0('posurines', posurines_df, run)
@@ -639,6 +642,7 @@ class Train:
             model['log'] = run['log'] = self.args.log
             model['batches'] = run['batches'] = '-'.join(self.uniques['batches'])
             model['context'] = run['context'] = 'inference'
+            model['remove_bad_samples'] = run['remove_bad_samples'] = self.args.remove_bad_samples
 
         else:
             model = None
@@ -648,9 +652,9 @@ class Train:
 
         # save scaler
         os.makedirs(f'{self.log_path}/saved_models/', exist_ok=True)
-        with open(f'{self.log_path}/saved_models/{scaler_name}_scaler.pkl', 'wb') as f:
+        with open(f'{self.log_path}/saved_models/scaler_{scaler_name}_tmp.pkl', 'wb') as f:
             pickle.dump(scaler, f)
-        with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}.pkl', 'wb') as f:
+        with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl', 'wb') as f:
             pickle.dump(all_data['inputs']['all'].columns, f)
 
         print(f'Iteration: {self.iter}')
@@ -1160,7 +1164,9 @@ class Train:
             f.write('threshold,acc_mean,acc_std,mcc_mean,mcc_std,FOT,FOT_std\n')
             for thres in thresholds:
                 f.write(f'{thres},{np.mean(accs[thres])},{np.std(accs[thres])},{np.mean(mccs[thres])},{np.std(mccs[thres])},{np.mean(proportion_predicted[thres])},{np.std(proportion_predicted[thres])}\n')
-
+        run[f'{group}/thresholds_table'].upload(
+            f'{self.log_path}/saved_models/table_{self.args.model_name}_{group}_thresholds.csv'
+        )
     def keep_models(self, scaler_name):
         """
         Remove the tmp from the name if the models are to be kept because the best yet
@@ -1168,9 +1174,9 @@ class Train:
         for f in os.listdir(f'{self.log_path}/saved_models/'):
             if f.startswith(f'{self.args.model_name}_{scaler_name}') and f.endswith('tmp.pkl'):
                 os.rename(f'{self.log_path}/saved_models/{f}', f'{self.log_path}/saved_models/{f[:-8]}.pkl')
-                # os.rename(f'{self.log_path}/saved_models/{f[:-8]}_train_indices_tmp.pkl', f'{self.log_path}/saved_models/{f[:-8]}_train_indices.pkl')
-                # os.rename(f'{self.log_path}/saved_models/{f[:-8]}_valid_indices_tmp.pkl', f'{self.log_path}/saved_models/{f[:-8]}_valid_indices.pkl')
-                # os.rename(f'{self.log_path}/saved_models/{f[:-8]}_test_indices_tmp.pkl', f'{self.log_path}/saved_models/{f[:-8]}_test_indices.pkl')
+
+        os.rename(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl', f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}.pkl')
+        os.rename(f'{self.log_path}/saved_models/scaler_{scaler_name}_tmp.pkl', f'{self.log_path}/saved_models/scaler_{scaler_name}.pkl')
 
     def remove_models(self, scaler_name):
         """
@@ -1179,6 +1185,8 @@ class Train:
         for f in os.listdir(f'{self.log_path}/saved_models/'):
             if f.startswith(f'{self.args.model_name}_{scaler_name}') and f.endswith('tmp.pkl'):
                 os.remove(f'{self.log_path}/saved_models/{f}')
+        os.remove(f'{self.log_path}/saved_models/scaler_{scaler_name}_tmp.pkl')
+        os.remove(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl')
 
     def dump_models(self, models, scaler_name, lists):
         # Save unique labels
@@ -1205,6 +1213,7 @@ class Train:
         # save model
         with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_tmp.pkl', 'wb') as f:
             pickle.dump(m, f)
+
         if lists is not None:
             # save indices
             with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_train_indices_tmp.pkl', 'wb') as f:
