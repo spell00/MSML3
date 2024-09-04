@@ -22,7 +22,7 @@ from matplotlib.lines import Line2D
 from models.plotting import confidence_ellipse
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.neighbors import KNeighborsClassifier
-from models.utils import log_confusion_matrix, save_roc_curve, save_precision_recall_curve, LogConfusionMatrix
+from models.utils import save_roc_curve, save_precision_recall_curve
 import seaborn as sns
 from sklearn.decomposition import PCA
 from sklearn.cross_decomposition import CCA

@@ -25,6 +25,7 @@ import xgboost
 import matplotlib.pyplot as plt
 # import pipeline from sklearn
 from sklearn.pipeline import Pipeline
+from utils import columns_stats_over0
 
 import sys
 
@@ -123,7 +124,7 @@ class Train:
             else:
                 param_grid[name] = param
         # n_aug = 0  # TODO TO REMOVE
-        param_grid['threshold'] = 0
+        hparams['threshold'] = param_grid['threshold'] = threshold = 0
         other_params = {
             'p': p, 
             'g': g, 
@@ -153,13 +154,13 @@ class Train:
         self.model_name = f'binary{self.args.binary}_{self.args.model_name}'
         self.uniques['labels'] = self.unique_labels
 
-        not_zeros_col = remove_zero_cols(all_data['inputs']['all'], threshold)
-
-        all_data['inputs']['all'] = all_data['inputs']['all'].iloc[:, not_zeros_col]
-        all_data['inputs']['train'] = all_data['inputs']['train'].iloc[:, not_zeros_col]
-        all_data['inputs']['valid'] = all_data['inputs']['valid'].iloc[:, not_zeros_col]
-        all_data['inputs']['test'] = all_data['inputs']['test'].iloc[:, not_zeros_col]
-        all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[:, not_zeros_col]
+        if threshold > 0:
+            not_zeros_col = remove_zero_cols(all_data['inputs']['all'], threshold)
+            all_data['inputs']['all'] = all_data['inputs']['all'].iloc[:, not_zeros_col]
+            all_data['inputs']['train'] = all_data['inputs']['train'].iloc[:, not_zeros_col]
+            all_data['inputs']['valid'] = all_data['inputs']['valid'].iloc[:, not_zeros_col]
+            all_data['inputs']['test'] = all_data['inputs']['test'].iloc[:, not_zeros_col]
+            all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[:, not_zeros_col]
 
         if self.log_neptune:
             # Create a Neptune run object
@@ -205,12 +206,29 @@ class Train:
             model['batches'] = run['batches'] = '-'.join(self.uniques['batches'])
             model['context'] = run['context'] = 'train'
             model['remove_bad_samples'] = run['remove_bad_samples'] = self.args.remove_bad_samples
-
         else:
             model = None
             run = None
 
         all_data, scaler = scale_data(scaler_name, all_data)
+
+        infos = {
+            'scaler': scaler_name,
+            'h_params': param_grid,
+            'mz': self.args.mz,
+            'rt': self.args.rt,
+            'mz_min': self.args.min_mz,
+            'mz_max': self.args.max_mz,
+            'rt_min': self.args.min_rt,
+            'rt_max': self.args.max_rt,
+            'mz_bin': self.args.mz,
+            'rt_bin': self.args.rt,
+            'features_cutoff': features_cutoff,
+            'threshold': threshold,
+            'inference': False,
+        }
+
+        columns_stats_over0(all_data['inputs']['all'], infos, False)
 
         # save scaler
         os.makedirs(f'{self.log_path}/saved_models/', exist_ok=True)
@@ -223,7 +241,6 @@ class Train:
         # models = []
         best_iteration = []
         h = 0
-        seed = 0
 
         if self.args.groupkfold:
             self.args.n_repeats = len(np.unique(all_data['batches']['all']))
@@ -1121,6 +1138,7 @@ class Train:
                 mccs[thres] += [MCC(df1.loc[:, 'preds'].to_numpy(), df1.loc[:, 'labels'].to_numpy())]
                 proportion_predicted[thres] += [df1.shape[0] / df.shape[0]]
         fig = plt.figure()
+        plt.axhline(0.95, color='black', linestyle='--')
         plt.plot(thresholds, [np.mean(accs[k]) for k in accs.keys()], label='acc', color='blue')
         plt.plot(thresholds, [np.mean(mccs[k]) for k in mccs.keys()], label='mcc', color='red')
         plt.plot(thresholds, [np.mean(proportion_predicted[k]) for k in proportion_predicted.keys()], label='FOT', color='black') # Fraction > threshold

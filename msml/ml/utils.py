@@ -1,3 +1,4 @@
+import os
 import matplotlib.pyplot as plt
 import numpy as np
 import itertools
@@ -195,9 +196,13 @@ def scale_data(scale, data, device='cpu'):
                     for i in range(data[data_type][group].shape[0]):
                         # if dtype is pandas
                         try:
-                            data[data_type][group].iloc[i] /= np.max(np.abs(data[data_type][group].iloc[i]))
+                            row_max = np.max(np.abs(data[data_type][group].iloc[i]))
+                            if row_max != 0:
+                                data[data_type][group].iloc[i] /= row_max
                         except:
-                            data[data_type][group][i] /= np.max(np.abs(data[data_type][group][i]))
+                            row_max = np.max(np.abs(data[data_type][group][i]))
+                            if row_max != 0:
+                                data[data_type][group][i] /= row_max
 
     elif scale == 'zscore':
         for data_type in ['inputs']:
@@ -269,6 +274,142 @@ def scale_data(scale, data, device='cpu'):
         return data, 'none'
 
     return data, scaler
+
+def columns_stats_over0(df, name, inference=False):
+    """
+    This column takes a pandas DataFrame and returns the number of non-zero columns
+    per binning type
+    First binning type: mz_parents
+    Second binning type: mz_children
+    Third binning type: rt
+    Args:
+        df: pandas DataFrame
+    
+    """
+    # First get all columns and split on _. Keep in 3 different lists
+    mz_parents = []
+    mz_children = []
+    rt = []
+    for col in df.columns:
+        features_binning = col.split('_')
+        mz_parents += [features_binning[0]]
+        mz_children += [features_binning[2]]
+        rt += [features_binning[1]]
+    mz_parents = list(set(mz_parents))
+    mz_children = list(set(mz_children))
+    rt = list(set(rt))
+    # Make dicts to store the counts
+    mz_parents_counts = {x: 0 for x in mz_parents}
+    mz_children_counts = {x: 0 for x in mz_children}
+    rt_counts = {x: 0 for x in rt}
+    # Count the number of columns per binning type
+    for col in df.columns:
+        features_binning = col.split('_')
+        if sum(df[col]) > 0:
+            mz_parents_counts[features_binning[0]] += 1
+            mz_children_counts[features_binning[2]] += 1
+            rt_counts[features_binning[1]] += 1
+    # Sort the dicts by keys value
+    mz_parents_counts = dict(sorted(mz_parents_counts.items(), key=lambda item: float(item[0]), reverse=False))
+    mz_children_counts = dict(sorted(mz_children_counts.items(), key=lambda item: int(item[0]), reverse=False))
+    rt_counts = dict(sorted(rt_counts.items(), key=lambda item: int(item[0]), reverse=False))
+
+    # Plot the counts
+    fig, ax = plt.subplots(3, 1, figsize=(10, 10))
+    ax[0].bar(mz_parents_counts.keys(), mz_parents_counts.values())
+    ax[0].set_title('Mz parents')
+    ax[1].bar(mz_children_counts.keys(), mz_children_counts.values())
+    ax[1].set_title('Mz children')
+    ax[2].bar(rt_counts.keys(), rt_counts.values())
+    ax[2].set_title('RT')
+    # x axius 45 degrees
+    for a in ax:
+        a.set_xticklabels(a.get_xticklabels(), rotation=45)
+    # For RT, only display every 10th value
+    mz_keys = list(mz_children_counts.keys())
+    ax[1].set_xticks([i for i in range(len(mz_keys)) if i % 10 == 0])
+    ax[1].set_xticklabels([mz_keys[i] for i in range(len(mz_keys)) if i % 10 == 0], rotation=45)
+
+    plt.tight_layout()
+
+    os.makedirs(f"columns/{name['scaler']}/mz{name['mz']}/rt{name['rt']}/" \
+                f"mz_min{name['mz_min']}/rt_min{name['rt_min']}/" \
+                f"mz_max{name['mz_max']}/rt_max{name['rt_max']}/" \
+                f"mz_bin{name['mz_bin']}/rt_bin{name['rt_bin']}/", exist_ok=True)
+    
+    plt.savefig(f"columns/{name['scaler']}/mz{name['mz']}/rt{name['rt']}/" \
+                f"mz_min{name['mz_min']}/rt_min{name['rt_min']}/" \
+                f"mz_max{name['mz_max']}/rt_max{name['rt_max']}/" \
+                f"mz_bin{name['mz_bin']}/rt_bin{name['rt_bin']}/" \
+                f"stats_over0_inference{inference}.png")
+
+
+def columns_stats_0(df, name, inference=False):
+    """
+    This column takes a pandas DataFrame and returns the number of non-zero columns
+    per binning type
+    First binning type: mz_parents
+    Second binning type: mz_children
+    Third binning type: rt
+    Args:
+        df: pandas DataFrame
+    
+    """
+    # First get all columns and split on _. Keep in 3 different lists
+    mz_parents = []
+    mz_children = []
+    rt = []
+    for col in df.columns:
+        features_binning = col.split('_')
+        mz_parents += [features_binning[0]]
+        mz_children += [features_binning[2]]
+        rt += [features_binning[1]]
+    mz_parents = list(set(mz_parents))
+    mz_children = list(set(mz_children))
+    rt = list(set(rt))
+    # Make dicts to store the counts
+    mz_parents_counts = {x: 0 for x in mz_parents}
+    mz_children_counts = {x: 0 for x in mz_children}
+    rt_counts = {x: 0 for x in rt}
+    # Count the number of columns per binning type
+    for col in df.columns:
+        features_binning = col.split('_')
+        if sum(df[col]) == 0:
+            mz_parents_counts[features_binning[0]] += 1
+            mz_children_counts[features_binning[2]] += 1
+            rt_counts[features_binning[1]] += 1
+    # Sort the dicts by keys value
+    mz_parents_counts = dict(sorted(mz_parents_counts.items(), key=lambda item: float(item[0]), reverse=False))
+    mz_children_counts = dict(sorted(mz_children_counts.items(), key=lambda item: int(item[0]), reverse=False))
+    rt_counts = dict(sorted(rt_counts.items(), key=lambda item: int(item[0]), reverse=False))
+
+    # Plot the counts
+    fig, ax = plt.subplots(3, 1, figsize=(10, 10))
+    ax[0].bar(mz_parents_counts.keys(), mz_parents_counts.values())
+    ax[0].set_title('Mz parents')
+    ax[1].bar(mz_children_counts.keys(), mz_children_counts.values())
+    ax[1].set_title('Mz children')
+    ax[2].bar(rt_counts.keys(), rt_counts.values())
+    ax[2].set_title('RT')
+    # x axius 45 degrees
+    for a in ax:
+        a.set_xticklabels(a.get_xticklabels(), rotation=45)
+    # For RT, only display every 10th value
+    rt_keys = list(rt_counts.keys())
+    ax[1].set_xticks([i for i in range(len(rt_keys)) if i % 10 == 0])
+    ax[1].set_xticklabels([rt_keys[i] for i in range(len(rt_keys)) if i % 10 == 0], rotation=45)
+
+    plt.tight_layout()    
+    os.makedirs(f"columns/{name['scaler']}/mz{name['mz']}/rt{name['rt']}/" \
+                f"mz_min{name['mz_min']}/rt_min{name['rt_min']}/" \
+                f"mz_max{name['mz_max']}/rt_max{name['rt_max']}/" \
+                f"mz_bin{name['mz_bin']}/rt_bin{name['rt_bin']}/", exist_ok=True)
+    
+    plt.savefig(f"columns/{name['scaler']}/mz{name['mz']}/rt{name['rt']}/" \
+                f"mz_min{name['mz_min']}/rt_min{name['rt_min']}/" \
+                f"mz_max{name['mz_max']}/rt_max{name['rt_max']}/" \
+                f"mz_bin{name['mz_bin']}/rt_bin{name['rt_bin']}/" \
+                f"stats_0_inference{inference}.png")
 
 
 def scale_data_images(scale, data, device='cpu'):
@@ -651,7 +792,9 @@ def remove_zero_cols(data, threshold):
                                       cols=dframe_list[1], 
                                       nums=dframe_list[2],
                                       threshold=threshold, 
-                                      n_processes=np.ceil(data.shape[1] / int(1e5)))
+                                      # n_processes=np.ceil(data.shape[1] / int(1e5))
+                                      n_processes=1
+                                      )
     notzeros = pool.map(fun.process, range(len(dframe_list[0])))
 
     new_columns = np.array([x for x in np.concatenate([x[0] for x in notzeros])])

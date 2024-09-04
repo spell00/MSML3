@@ -38,32 +38,12 @@ from sklearn.preprocessing import minmax_scale as scale
 from scipy import sparse
 # import copyfile
 from shutil import copyfile
+from utils import adjust_tensors
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(filename='make_tensors_ms2.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
 
 GLOBAL_TIMES = csv.writer(open('global_times.csv', 'w'))
-
-def crop_data(data, columns, args):
-    """
-    Crop the data to the min and max mz and rt values
-    :param data:
-    :param columns:
-    :param args:
-    :return:
-    """
-    mz_min = args.min_mz
-    mz_max = args.max_mz
-    rt_min = args.min_rt
-    rt_max = args.max_rt
-    rts = np.array([float(x.split("_")[1]) for x in columns])
-    mzs = np.array([float(x.split("_")[2]) for x in columns])
-    rts_to_keep = (rts >= rt_min) & (rts <= rt_max)
-    mzs_to_keep = (mzs >= mz_min) & (mzs <= mz_max)
-
-    data = data[:, rts_to_keep & mzs_to_keep]
-    columns = columns[rts_to_keep & mzs_to_keep]
-    return data, columns
 
 
 class MakeTensorsMultiprocess:
@@ -287,62 +267,6 @@ class MakeTensorsMultiprocess:
         im.close()
         del im
 
-
-def delete_rows_csr(mat, indices):
-    """
-    Remove the rows denoted by ``indices`` form the CSR sparse matrix ``mat``.
-    """
-    if not isinstance(mat, csr_matrix):
-        raise ValueError("works only for CSR format -- use .tocsr() first")
-    indices = list(indices)
-    mask = np.ones(mat.shape[0], dtype=bool)
-    mask[indices] = False
-    return mat[mask]
-
-
-def adjust_tensors(list_matrices, max_features, args_dict):
-    # TODO VERIFY THAT THE ADJUSTMENTS ARE CORRECT; everything is appended to the high end of the tensor, is it correct?
-    # MIGHT CAUSE IMPORTANT BATCH EFFECTS IF NOT RIGHT
-    n_parents = max_features['parents']
-    max_rt = max_features['max_rt']
-    max_mz = max_features['max_mz']
-    # TODO could be parallelized if worth it
-    for j, matrices in enumerate(list_matrices):
-        with tqdm(total=len(matrices), position=0, leave=True) as pbar:
-            for i, matrix in enumerate(matrices):
-                # matrix = data_matrix[0][0]
-                if n_parents - len(matrix) > 0:
-                    logging.warning(
-                        f'mz{args_dict.mz_bin} rt{args_dict.rt_bin} mzp{args_dict.mz_bin_post} rtp{args_dict.rt_bin_post} : {label} had different number of min_mz_parent')
-                    pbar.update(1)
-                    continue
-
-                # https://stackoverflow.com/questions/6844998/is-there-an-efficient-way-of-concatenating-scipy-sparse-matrices
-                # hstack of csc matrices should be faster than coo (worst) or csr
-                for x in list(matrix.keys()):
-                    if max_mz - matrix[x].shape[0] > 0:
-                        matrix[x] = csc_matrix(
-                            vstack((
-                                matrix[x], np.zeros((int((max_mz - matrix[x].shape[0])), matrix[x].shape[1])))
-                            ))
-                    else:
-                        matrix[x] = csc_matrix(matrix[x])
-                    if max_rt - matrix[x].shape[1] > 0:
-                        matrix[x] = csc_matrix(
-                            hstack((
-                                matrix[x], csc_matrix(np.zeros((matrix[x].shape[0], int((max_rt - matrix[x].shape[1])))))
-                            ))
-                        )
-                    else:
-                        matrix[x] = csc_matrix(matrix[x])
-                matrices[i] = hstack([matrix[x].reshape(1, -1) for x in list(matrix.keys())]).tocsr()
-                del matrix
-                pbar.update(1)
-        list_matrices[j] = matrices
-    print('Tensors are adjusted.')
-    return list_matrices
-
-
 def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
     """
     Loads the tsvs an
@@ -362,9 +286,6 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
         lists["tsv"] = np.array(lists['tsv'])[inds_to_keep].tolist()
         lists["labels"] = np.array(lists['labels'])[inds_to_keep].tolist()
     concat = MakeTensorsMultiprocess(lists["tsv"], lists["labels"], bins, dirname, args_dict)
-
-    # Start a timer to record the time it takes to process the rest of the script
-    timer_adustments = time.time()
 
     if args_dict.n_cpus < 1:
         n_cpus = multiprocessing.cpu_count() + args_dict.n_cpus
@@ -392,9 +313,6 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
     max_rt = max([max([x[0][y].shape[1] for y in x[0]]) for x in data_matrix])
     max_mz = max([max([x[0][y].shape[0] for y in x[0]]) for x in data_matrix])
 
-    # process_sparse_data_supervised type(max_rt) == int and type(max_mz) == int
-
-    # data_matrix = np.concatenate(([x[0] for x in data_matrix]))
     if args_dict.rt_rounding == 0:
         rt_bin = int(args_dict.rt_bin_post)
     else:
@@ -460,13 +378,19 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
     rts = [np.round(rt * args_dict.rt_bin_post, args_dict.rt_rounding) - rt_shift for rt in range(max_rt)]
     mz_min_parents = np.arange(min(parents), max(parents) + diff_parents, diff_parents)
 
-    # Calculate time for the adjustments in seconds
-    timer_adustments = time.time() - timer_adustments
-    # GLOBAL_TIMES.writerow(['Adjustments', timer_adustments])
-
     return matrices, new_labels, [f"{mz_min_parent}_{rt}_{mz}" for mz_min_parent in mz_min_parents for rt in rts for mz
                                    in mzs], {'parents': parents, 'max_rt': max_rt, 'max_mz': max_mz}
-    
+   
+def delete_rows_csr(mat, indices):
+    """
+    Remove the rows denoted by ``indices`` form the CSR sparse matrix ``mat``.
+    """
+    if not isinstance(mat, csr_matrix):
+        raise ValueError("works only for CSR format -- use .tocsr() first")
+    indices = list(indices)
+    mask = np.ones(mat.shape[0], dtype=bool)
+    mask[indices] = False
+    return mat[mask]    
 
 
 if __name__ == "__main__":
@@ -514,6 +438,7 @@ if __name__ == "__main__":
     parser.add_argument("--min_rt", type=int, default=140)
     parser.add_argument("--max_rt", type=int, default=320)
     parser.add_argument("--train_batches", type=str, default='B14-B13-B12-B11-B10-B9-B8-B7-B6-B5-B4-B3-B2-B1')
+    parser.add_argument("--decimals", type=int, default=-1)
 
     args = parser.parse_args()
     args.exp_name = f'all_{args.train_batches}_gkf{args.groupkfold}_mz{args.min_mz}-{args.max_mz}rt{args.min_rt}-{args.max_rt}_{args.n_splits}splits'
@@ -747,11 +672,12 @@ if __name__ == "__main__":
     pool_data = pool_data.todense()[:, feats_pos]
 
     # Round values to 2 decimals
-    data = np.round(np.nan_to_num(data), 2)
-    try:
-        pool_data = np.round(np.nan_to_num(pool_data), 2)
-    except:
-        pass
+    if args.decimals > 0:
+        data = np.round(np.nan_to_num(data), args.decimals)
+        try:
+            pool_data = np.round(np.nan_to_num(pool_data), args.decimals)
+        except:
+            pass
     ordering_timer = time.time() - ordering_timer
     GLOBAL_TIMES.writerow(['Reordering', ordering_timer])
     # Timer to save files

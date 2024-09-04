@@ -7,6 +7,12 @@ from msml.utils.utils import get_unique_labels
 from scipy.sparse import vstack, csr_matrix
 import os
 
+def blocks(files, size=65536):
+    while True:
+        b = files.read(size)
+        if not b: break
+        yield b
+
 def read_csv(csv_file, num_rows=1000, n_cols=1000):
     # data = np.array([])
     data = []
@@ -18,6 +24,15 @@ def read_csv(csv_file, num_rows=1000, n_cols=1000):
         else:
             progress_bar = tqdm(csv_reader, desc="Reading CSV")
         for row_num, row in enumerate(csv_reader):
+            if row_num == 0:
+                if num_rows == -1:
+                    num_rows = sum(1 for _ in open(csv_file, 'rb'))
+                else:
+                    num_rows = min(num_rows, sum(1 for _ in open(csv_file, 'rb')))
+                data_num = np.empty((num_rows-1, len(row)-3))
+                data_str = np.empty((num_rows-1, 3), dtype=object)
+                header = row
+                continue
             if n_cols != -1:
                 row = np.array(row)[:n_cols]
             else:
@@ -25,17 +40,15 @@ def read_csv(csv_file, num_rows=1000, n_cols=1000):
             if num_rows != -1:
                 if row_num >= num_rows:
                     break
-            # if len(data) == 0:
-            #     data = row.reshape(1, -1)
-            # else:
-            #     data = np.concatenate((data, row.reshape(1, -1)), 0)
-            data += [row]
+
+            data_num[row_num-1] = row[3:].astype(float)
+            data_str[row_num-1] = row[:3]
             progress_bar.update(1)
             del row
-            # print(row.shape)
-    data = np.stack(data)
 
-    return pd.DataFrame(data[1:, :], columns=data[0, :])
+    data = np.concatenate((data_str, data_num), 1)
+
+    return pd.DataFrame(data, columns=header)
 
 def read_csv_low_ram(csv_file, num_rows=1000, n_cols=1000):
     data = None
@@ -83,7 +96,7 @@ def get_data_infer(path, args, seed=42):
         data[info] = {}
     data[info]['all'] = data[info]['test'] = data[info]['urinespositives'] = np.array([])
     matrix = read_csv(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
-    top_features = read_csv(csv_file=f"{path}/{args.features_file}", num_rows=-1, n_cols=args.n_features)
+    top_features = pd.read_csv(f"{path}/{args.features_file}")
     names = matrix.iloc[:, 0]
     labels = matrix.iloc[:, 1]
 
@@ -116,6 +129,18 @@ def get_data_infer(path, args, seed=42):
     if args.log1p:
         matrix.iloc[:] = np.log1p(matrix.values)
     matrix.iloc[:] = np.nan_to_num(matrix.values)
+
+    columns = matrix.columns
+    mz_parents = [float(column.split('_')[0]) for column in columns]
+    mzs = [float(column.split('_')[2]) for column in columns]
+    rts = [float(column.split('_')[1]) for column in columns]
+    columns_to_keep = [True if (mzp >= args.min_mz_parent and mzp <= args.max_mz_parent) \
+                        and (mz >= args.min_mz and mz <= args.max_mz) \
+                        and (rt >= args.min_rt and rt <= args.max_rt) \
+                        else False for name, mzp, mz, rt in zip(columns, mz_parents, mzs, rts)
+                        ]
+
+    matrix = matrix.loc[:, columns_to_keep]
     # pool_pos = [i for i, name in enumerate(names.values.flatten()) if 'QC' in name]
     pos = [i for i, name in enumerate(names.values.flatten()) if 'QC' not in name]
 
@@ -299,6 +324,17 @@ def get_data(path, args, seed=42):
             # batches = np.stack([np.argwhere(x == unique_batches).squeeze() for x in batches])
             orders = np.array([0 for _ in batches])
             matrix = matrix.iloc[:, 3:].fillna(0).astype(float)
+
+            columns = matrix.columns
+            mz_parents = [float(column.split('_')[0]) for column in columns]
+            mzs = [float(column.split('_')[2]) for column in columns]
+            rts = [float(column.split('_')[1]) for column in columns]
+            columns_to_keep = [True if (mzp >= args.min_mz_parent and mzp <= args.max_mz_parent) \
+                                and (mz >= args.min_mz and mz <= args.max_mz) \
+                                and (rt >= args.min_rt and rt <= args.max_rt) \
+                                else False for name, mzp, mz, rt in zip(columns, mz_parents, mzs, rts)
+                             ]
+            matrix = matrix.loc[:, columns_to_keep]
             if args.features_selection != 'none':
                 top_features = read_csv(csv_file=f"{path}/{args.features_file}", num_rows=-1, n_cols=args.n_features)
                 matrix = matrix.loc[:, top_features.iloc[:, 0].values[:args.n_features]]

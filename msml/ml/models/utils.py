@@ -73,6 +73,87 @@ def to_categorical(y, num_classes):
     """
     return torch.eye(num_classes, dtype=torch.int)[y]
 
+def columns_stats(df, name, inference=False):
+    """
+    This column takes a pandas DataFrame and returns the number of non-zero columns
+    per binning type
+    First binning type: mz_parents
+    Second binning type: mz_children
+    Third binning type: rt
+    Args:
+        df: pandas DataFrame
+    
+    """
+    # First get all columns and split on _. Keep in 3 different lists
+    mz_parents = []
+    mz_children = []
+    rt = []
+    for col in df.columns:
+        features_binning = col.split('_')
+        mz_parents += [features_binning[0]]
+        mz_children += [features_binning[1]]
+        rt += [features_binning[2]]
+    mz_parents = list(set(mz_parents))
+    mz_children = list(set(mz_children))
+    rt = list(set(rt))
+    # Make dicts to store the counts
+    mz_parents_counts = {x: 0 for x in mz_parents}
+    mz_children_counts = {x: 0 for x in mz_children}
+    rt_counts = {x: 0 for x in rt}
+    # Count the number of columns per binning type
+    for col in df.columns:
+        features_binning = col.split('_')
+        if sum(df[col]) > 0:
+            mz_parents_counts[features_binning[0]] += 1
+            mz_children_counts[features_binning[1]] += 1
+            rt_counts[features_binning[2]] += 1
+    
+    # Sort the dicts by numerical value
+    mz_parents_counts = dict(sorted(mz_parents_counts.items(), key=lambda item: item[1], reverse=True))
+    mz_children_counts = dict(sorted(mz_children_counts.items(), key=lambda item: item[1], reverse=True))
+    rt_counts = dict(sorted(rt_counts.items(), key=lambda item: item[1], reverse=True))
+
+    # Plot the counts
+    fig, ax = plt.subplots(3, 1, figsize=(10, 10))
+    ax[0].bar(mz_parents_counts.keys(), mz_parents_counts.values())
+    ax[0].set_title('Mz parents')
+    ax[1].bar(mz_children_counts.keys(), mz_children_counts.values())
+    ax[1].set_title('Mz children')
+    ax[2].bar(rt_counts.keys(), rt_counts.values())
+    ax[2].set_title('RT')
+    plt.tight_layout()
+    plt.savefig(f'columns_not_zeros_stats_{name}_{inference}.png')
+
+    # Make a figure with the counts of columns all at zeros
+    mz_parents_counts = {x: 0 for x in mz_parents}
+    mz_children_counts = {x: 0 for x in mz_children}
+    rt_counts = {x: 0 for x in rt}
+    # Count the number of columns per binning type
+    for col in df.columns:
+        features_binning = col.split('_')
+        if sum(df[col]) == 0:
+            mz_parents_counts[features_binning[0]] += 1
+            mz_children_counts[features_binning[1]] += 1
+            rt_counts[features_binning[2]] += 1
+    
+    # Sort the dicts by numerical value
+    mz_parents_counts = dict(sorted(mz_parents_counts.items(), key=lambda item: item[1], reverse=True))
+    mz_children_counts = dict(sorted(mz_children_counts.items(), key=lambda item: item[1], reverse=True))
+    rt_counts = dict(sorted(rt_counts.items(), key=lambda item: item[1], reverse=True))
+
+    # Plot the counts
+    fig, ax = plt.subplots(3, 1, figsize=(10, 10))
+    ax[0].bar(mz_parents_counts.keys(), mz_parents_counts.values())
+    ax[0].set_title('Mz parents')
+    ax[1].bar(mz_children_counts.keys(), mz_children_counts.values())
+    ax[1].set_title('Mz children')
+    ax[2].bar(rt_counts.keys(), rt_counts.values())
+    ax[2].set_title('RT')
+    plt.tight_layout()
+    plt.savefig(f'columns_zeros_stats_{name}_{inference}.png')
+    
+
+
 
 def plot_confusion_matrix(cm, class_names, acc, mcc):
     """

@@ -56,11 +56,13 @@ if __name__ == '__main__':
     parser.add_argument('--combat', type=int, default=0)  # TODO not using this anymore
     parser.add_argument('--shift', type=int, default=0)  # TODO keep this?
     parser.add_argument('--log', type=str, default='inloop')
-    parser.add_argument('--features_selection', type=str, default='mutual_info_classif')
+    parser.add_argument('--features_selection', type=str, default='none')
     parser.add_argument('--concs', type=str, default='na,h')
     parser.add_argument('--n_repeats', type=int, default=5)
     parser.add_argument("--min_mz", type=int, default=0)
     parser.add_argument("--max_mz", type=int, default=10000)
+    parser.add_argument("--min_mz_parent", type=int, default=359)
+    parser.add_argument("--max_mz_parent", type=int, default=872)
     parser.add_argument("--min_rt", type=int, default=0)
     parser.add_argument("--max_rt", type=int, default=1000)
     parser.add_argument("--low_ram", type=int, default=0)
@@ -71,11 +73,15 @@ if __name__ == '__main__':
         args.mz_rounding = len(str(args.mz).split('.')[-1]) + 1
     else:
         args.mz_rounding = 1
+        args.mz = int(args.mz)
+        args.mzp = int(args.mzp)
 
     if args.rt < 1:
         args.rt_rounding = len(str(args.rt).split('.')[-1]) + 1
     else:
         args.rt_rounding = 1
+        args.rt = int(args.rt)
+        args.rtp = int(args.rtp)
     args.csv_file = f'{args.csv_file}_{args.features_selection}.csv'
     args.features_file = f'{args.features_selection}_scores.csv'
     args.bins = {
@@ -103,13 +109,28 @@ if __name__ == '__main__':
         'b4-03-01-2024', 'b3-02-29-2024', 'b2-02-21-2024', 
         'b1-02-02-2024'
     ]
+    batch_dates = [
+        "B15-06-29-2024", 'B1-02-02-2024',
+        "B14-06-10-2024", "B13-06-05-2024", "B12-05-31-2024", "B11-05-24-2024",
+        "B10-05-03-2024", "B9-04-22-2024", "B8-04-15-2024",
+        'B7-04-03-2024', 'B6-03-29-2024', 'B5-03-13-2024',
+        'B4-03-01-2024', 'B3-02-29-2024', 'B2-02-21-2024'
+    ]
+    batches_to_keep = [
+        "b15-06-29-2024", 'b1-02-02-2024',
+        "b14-06-10-2024", "b13-06-05-2024", "b12-05-31-2024", "b11-05-24-2024",
+        "b10-05-03-2024", "b9-04-22-2024", "b8-04-15-2024", 
+        'b7-04-03-2024', 'b6-03-29-2024', 'b5-03-13-2024', 
+        'b4-03-01-2024', 'b3-02-29-2024', 'b2-02-21-2024',
+    ]
     batch_dates = [x.split('-')[0] for x in batch_dates]
     batches_to_keep = [x.split('-')[0] for x in batches_to_keep]
 
     concs = args.concs.split(',')
-    cropings = f"mz{args.min_mz}-{args.max_mz}rt{args.min_rt}-{args.max_rt}"
+    cropings = f"mz0-10000rt0-320"
+    new_cropings = f"mz{args.min_mz}-{args.max_mz}rt{args.min_rt}-{args.max_rt}"
     args.exp_name = f'{"-".join(batches_to_keep)}_binary{args.binary}_{args.n_features}' \
-                        f'_gkf{args.groupkfold}_ovr{args.ovr}_{cropings}_{"_".join(concs)}'
+                        f'_gkf{args.groupkfold}_ovr{args.ovr}_{new_cropings}_{"_".join(concs)}'
 
     # TODO change gkf0; only valid because using all features
     exp = f'all_{"-".join(batch_dates)}_gkf0_{cropings}_5splits'  
@@ -172,7 +193,6 @@ if __name__ == '__main__':
     if args.model_name == 'RF':
         cfr = RandomForestClassifier
         space = [
-            # Integer(100, 20000, 'uniform', name='features_cutoff'),
             Real(0, 0.5, 'uniform', name='threshold'),
             Integer(0, 1, 'uniform', name='n_aug'),
             Real(0, 0.5, 'uniform', name='p'),
@@ -190,8 +210,6 @@ if __name__ == '__main__':
         from sklearn.naive_bayes import GaussianNB
         cfr = GaussianNB
         space = [
-            # Integer(100, 20000, 'uniform', name='features_cutoff'),
-            # Real(0, 0.5, 'uniform', name='threshold'),
             Integer(0, 5, 'uniform', name='n_aug'),
             Real(0, 0.5, 'uniform', name='p'),
             Real(0, 0.5, 'uniform', name='g'),
@@ -272,9 +290,9 @@ if __name__ == '__main__':
             Real(0, 0.5, 'uniform', name='g'),
             Integer(5, 9, 'uniform', name='max_depth'), # BEST WAS DEFAULT
             Real(10, 20, 'uniform', name='early_stopping_rounds'), # 
-            Integer(500, 600, 'uniform', name='n_estimators'),
+            Integer(300, 350, 'uniform', name='n_estimators'),
             # Categorical(['binary:logistic'], name='objective'),
-            Categorical(['minmax2', 'l2', 'zscore'], name="scaler"),
+            Categorical(['minmax2'], name="scaler"),
         ]
     hparams_names = [x.name for x in space]
     train = Train(name="inputs", model=cfr, data=data, uniques=uniques,

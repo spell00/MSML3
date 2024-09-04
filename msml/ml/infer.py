@@ -23,7 +23,9 @@ from scipy import stats
 from log_shap import log_shap
 import xgboost
 import matplotlib.pyplot as plt
-import joblib
+import time
+from tqdm import tqdm
+from utils import columns_stats_0, columns_stats_over0
 
 class Infer:
     def __init__(self, name, model, data, uniques,
@@ -174,16 +176,11 @@ class Infer:
             model['log'] = run['log'] = self.args.log
             model['batches'] = run['batches'] = '-'.join(self.uniques['batches'])
             model['context'] = run['context'] = 'inference'
-
         else:
             model = None
             run = None
 
-
         print(f'Iteration: {self.iter}')
-        # models = []
-        # h = 0
-        # seed = 0
 
         lists['names']['posurines'] += [np.array([x.split('_')[-2] for x in all_data['names']['urinespositives']])]
         lists['batches']['posurines'] += [all_data['batches']['urinespositives']]
@@ -307,12 +304,29 @@ class Infer:
         self.model_name = f'binary{self.args.binary}_{self.args.model_name}'
         self.uniques['labels'] = self.unique_labels
         all_data, scaler = scale_data(scaler_name, all_data)
+        infos = {
+            'scaler': scaler_name,
+            'h_params': param_grid,
+            'mz': self.args.mz,
+            'rt': self.args.rt,
+            'mz_min': self.args.min_mz,
+            'mz_max': self.args.max_mz,
+            'rt_min': self.args.min_rt,
+            'rt_max': self.args.max_rt,
+            'mz_bin': self.args.mz,
+            'rt_bin': self.args.rt,
+            'features_cutoff': features_cutoff,
+            'threshold': 0,
+            'inference': False,
+        }
+        columns_stats_over0(all_data['inputs']['all'], infos, True)
+        columns_stats_0(all_data['inputs']['all'], infos, True)
 
         # import array of columns from columns_after_threshold.pkl
         with open(f'{self.args.exp_name}/columns_after_threshold_{self.args.scaler_name}.pkl', 'rb') as f:
             columns = pickle.load(f)
 
-        all_data['inputs']['all'] = all_data['inputs']['all'][columns]
+        all_data['inputs']['all'] = all_data['inputs']['all'].loc[:, columns]
         all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'][columns]
         all_data['inputs']['test'] = all_data['inputs']['test'][columns]
 
@@ -373,61 +387,86 @@ class Infer:
 
 
         print(f'Iteration: {self.iter}')
-        # models = []
-        # h = 0
-        # seed = 0
 
-        lists['names']['posurines'] += [np.array([x.split('_')[-2] for x in all_data['names']['urinespositives']])]
-        lists['batches']['posurines'] += [all_data['batches']['urinespositives']]
+        lists['names']['posurines'] = np.array([x.split('_')[-2] for x in all_data['names']['urinespositives']])
+        lists['batches']['posurines'] = all_data['batches']['urinespositives']
 
-        lists['names']['test'] += [all_data['names']['all']]
+        lists['names']['test'] = all_data['names']['all']
 
-        lists['batches']['test'] += [all_data['batches']['all']]
-        lists['unique_batches']['test'] += [list(np.unique(all_data['batches']['all']))]
+        lists['batches']['test'] = all_data['batches']['all']
+        lists['unique_batches']['test'] = list(np.unique(all_data['batches']['all']))
 
         test_data = all_data['inputs']['all'].fillna(0)
 
-        lists['classes']['test'] += [np.array([np.argwhere(l == self.unique_labels)[0][0] for l in all_data['labels']['all']])]
-        lists['labels']['test'] += [all_data['labels']['all']]
+        lists['classes']['test'] = np.array([np.argwhere(l == self.unique_labels)[0][0] for l in all_data['labels']['all']])
+        lists['labels']['test'] = all_data['labels']['all']
 
         try:
-            lists['proba']['test'] += [[self.model[i].predict_proba(test_data) for i in range(len(self.model))]]
+            times = []
+            # use progress_bar
+            with tqdm(total=len(test_data)) as pbar:
+                for data in range(len(test_data)):
+                    start = time.time()
+                    lists['proba']['test'] += [[self.model[i].predict_proba(test_data.iloc[data].values.reshape([1, -1])).flatten() for i in range(len(self.model))]]
+                    lists['proba']['test'][-1] = np.mean(np.stack(lists['proba']['test'][-1]), axis=0)
+                    lists['preds']['test'] += [np.argmax(lists['proba']['test'][-1], axis=0)]
+                    times.append(time.time() - start)
+                    pbar.update(1)
+            lists['proba']['test'] = np.stack(lists['proba']['test'])
+            lists['preds']['test'] = np.stack(lists['preds']['test'])
+            # for data in test_data:
+            #     start = time.time()
+            #     lists['proba']['test'] += [np.mean([self.model[i].predict_proba(test_data) for i in range(len(self.model))] , axis=0)]
+            #     lists['preds']['test'] += [np.argmax(lists['proba']['test'][-1], axis=1)]
+            #     times.append(time.time() - start)
+            # SAVE TIMES
+            # boxplot
+            plt.boxplot(times, vert=False)
+            plt.title('Inference times')
+            plt.savefig(f'{self.log_path}/boxplot_times_infer_predictions.png')
+
+            # Histogram
+            plt.hist(times)
+            plt.title('Inference times')
+            plt.savefig(f'{self.log_path}/hist_times_infer_predictions.png')
+
+            # lists['proba']['test'] = [self.model[i].predict_proba(test_data) for i in range(len(self.model))]
             # take the average of the proba
-            lists['proba']['test'][-1] = np.mean(np.stack(lists['proba']['test'][-1]), 0)
+            # lists['proba']['test'] = np.mean(np.stack(lists['proba']['test']), axis=0)
             # Take the highest proba to make a pred
-            lists['preds']['test'] += [np.argmax(lists['proba']['test'][-1], axis=1)]
+            # lists['preds']['test'] = np.argmax(lists['proba']['test'], axis=1)
 
         except:
-            lists['preds']['test'] += [[self.model[i].predict(test_data.values) for i in range(len(self.model))]]
+            lists['preds']['test'] = [self.model[i].predict(test_data.values) for i in range(len(self.model))]
             # take the mode of the predictions
-            lists['preds']['test'] = [stats.mode(np.stack(lists['preds']['test']), axis=0)[0].flatten()]
+            lists['preds']['test'] = stats.mode(np.stack(lists['preds']['test']), axis=0)[0].flatten()
 
         if all_data['inputs']['urinespositives'].shape[0] > 0:
             try:
-                lists['preds']['posurines'] += [m.predict(all_data['inputs']['urinespositives'])]
+                lists['preds']['posurines'] = m.predict(all_data['inputs']['urinespositives'])
                 try:
-                    lists['proba']['posurines'] += [m.predict_proba(all_data['inputs']['urinespositives'])]
+                    lists['proba']['posurines'] = m.predict_proba(all_data['inputs']['urinespositives'])
                 except:
                     pass
-                lists['mcc']['posurines'] += [MCC(lists['classes']['posurines'][-1], lists['preds']['posurines'][-1])]
-                lists['acc']['posurines'] += [ACC(lists['classes']['posurines'][-1], lists['preds']['posurines'][-1])]
+                lists['mcc']['posurines'] = MCC(lists['classes']['posurines'][-1], lists['preds']['posurines'][-1])
+                lists['acc']['posurines'] = ACC(lists['classes']['posurines'][-1], lists['preds']['posurines'][-1])
 
             except:
-                lists['preds']['posurines'] += [m.predict(all_data['inputs']['urinespositives'].values)]
+                lists['preds']['posurines'] = m.predict(all_data['inputs']['urinespositives'].values)
                 try:
-                    lists['proba']['posurines'] += [m.predict_proba(all_data['inputs']['urinespositives'].values)]
+                    lists['proba']['posurines'] = m.predict_proba(all_data['inputs']['urinespositives'].values)
                 except:
                     pass
-                lists['mcc']['posurines'] += [MCC(lists['classes']['posurines'][-1], lists['preds']['posurines'][-1])]
-                lists['acc']['posurines'] += [ACC(lists['classes']['posurines'][-1], lists['preds']['posurines'][-1])]
+                lists['mcc']['posurines'] = MCC(lists['classes']['posurines'][-1], lists['preds']['posurines'][-1])
+                lists['acc']['posurines'] = ACC(lists['classes']['posurines'][-1], lists['preds']['posurines'][-1])
             
         try:
             data_list = {
                 'test': {
                     'inputs': test_data,
-                    'labels': lists['classes']['test'][-1],
-                    'preds': lists['preds']['test'][-1],
-                    'proba': lists['proba']['test'][-1],
+                    'labels': lists['classes']['test'],
+                    'preds': lists['preds']['test'],
+                    'proba': lists['proba']['test'],
                     'batches': all_data['batches']['all'],
                     'names': all_data['names']['test']
                 },
@@ -436,14 +475,14 @@ class Infer:
             data_list = {
                 'test': {
                     'inputs': test_data,
-                    'labels': lists['classes']['test'][-1],
-                    'preds': lists['preds']['test'][-1],
+                    'labels': lists['classes']['test'],
+                    'preds': lists['preds']['test'],
                     'batches': all_data['batches']['all'],
                     'names': all_data['names']['test']
                 },
             }
-        lists['mcc']['test'] += [MCC(lists['classes']['test'][-1], lists['preds']['test'][-1])]
-        lists['acc']['test'] += [ACC(lists['classes']['test'][-1], lists['preds']['test'][-1])]
+        lists['mcc']['test'] = MCC(lists['classes']['test'], lists['preds']['test'])
+        lists['acc']['test'] = ACC(lists['classes']['test'], lists['preds']['test'])
         
         # TODO all_data and self.data and data are all messed up
         self.data['inputs']['all'] = all_data['inputs']['all']
@@ -465,17 +504,8 @@ class Infer:
               )
         lists = self.save_confusion_matrices(lists, run)
         self.save_roc_curves(lists, run)
-        # if np.mean(lists['mcc']['test']) > np.mean(self.best_scores['mcc']['test']):
-            # log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path)
-            # Save the individual scores of each sample with class, #batch
+
         self.save_results_df(lists, run)
-            # best_scores = self.save_best_model_hparams(param_grid, other_params, scaler_name, lists['unique_batches'], metrics)
-        # else:
-        #     best_scores = {
-        #         'nbe': None,
-        #         'ari': None,
-        #         'ami': None,
-        #     }
 
         if self.log_neptune:
             log_neptune(run, lists, None)
@@ -631,25 +661,25 @@ class Infer:
         if len(lists['proba']['test']) > 0:
             df_test = pd.DataFrame(
                 {
-                    'classes': np.concatenate(lists['classes']['test']),
-                    'labels': np.concatenate(lists['labels']['test']),
-                    'batches': np.concatenate(lists['batches']['test']),
-                    'preds': np.concatenate(lists['preds']['test']),
-                    'proba': np.concatenate(lists['proba']['test']).max(1),
-                    'names': np.concatenate(lists['names']['test'])
+                    'classes': lists['classes']['test'],
+                    'labels': lists['labels']['test'],
+                    'batches': lists['batches']['test'],
+                    'preds': lists['preds']['test'],
+                    'proba': lists['proba']['test'].max(1),
+                    'names': lists['names']['test']
                 }
             )
             for i, label in enumerate(self.unique_labels):
-                df_test[label] = np.concatenate(lists['proba']['test'])[:, i]
+                df_test[label] = lists['proba']['test'][:, i]
                 
         else:
             df_test = pd.DataFrame(
                 {
-                    'classes': np.concatenate(lists['classes']['test']),
-                    'labels': np.concatenate(lists['labels']['test']),
-                    'batches': np.concatenate(lists['batches']['test']),
-                    'preds': np.concatenate(lists['preds']['test']),
-                    'names': np.concatenate(lists['names']['test'])
+                    'classes': lists['classes']['test'],
+                    'labels': lists['labels']['test'],
+                    'batches': lists['batches']['test'],
+                    'preds': lists['preds']['test'],
+                    'names': lists['names']['test']
                 }
             )
 
@@ -659,7 +689,7 @@ class Infer:
         os.makedirs(f'{self.log_path}/saved_models', exist_ok=True)
         df_test.to_csv(f'{self.log_path}/saved_models/{self.args.model_name}_test_individual_results.csv')
         run[f'test/individual_results'].upload(f'{self.log_path}/saved_models/{self.args.model_name}_test_individual_results.csv')
-        self.save_thresholds_curve('test', lists, run)
+        # self.save_thresholds_curve('test', lists, run)
         self.save_thresholds_curve0('test', df_test, run)
         # plot_bars(self.args, run, self.unique_labels)
         
@@ -696,7 +726,7 @@ class Infer:
         os.makedirs(f'{self.log_path}/saved_models', exist_ok=True)
         df_test.to_csv(f'{self.log_path}/saved_models/{self.args.model_name}_test_individual_results.csv')
         run[f'test/individual_results'].upload(f'{self.log_path}/saved_models/{self.args.model_name}_test_individual_results.csv')
-        self.save_thresholds_curve('test', lists, run)
+        # self.save_thresholds_curve('test', lists, run)
         self.save_thresholds_curve0('test', df_test, run)
         # plot_bars(self.args, run, self.unique_labels)
         

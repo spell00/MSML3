@@ -28,38 +28,17 @@ import warnings
 # import queue
 from features_selection import get_feature_selection_method
 from features_selection_sparse import keep_only_not_zeros_sparse, keep_not_zeros_sparse, \
-    process_sparse_data, count_array, make_lists, split_sparse, MultiKeepNotFunctionsSparse, \
-    process_sparse_data_supervised
+    process_sparse_data, count_array, split_sparse, MultiKeepNotFunctionsSparse, \
+    process_sparse_data_supervised, make_lists
 from scipy.signal import find_peaks
 from statsmodels.nonparametric.smoothers_lowess import lowess
 from msalign import msalign
 from functools import reduce
 from sklearn.preprocessing import minmax_scale as scale
+from utils import crop_data, adjust_tensors, delete_rows_csr
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(filename='make_tensors_ms2.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
-
-
-def crop_data(data, columns, args):
-    """
-    Crop the data to the min and max mz and rt values
-    :param data:
-    :param columns:
-    :param args:
-    :return:
-    """
-    mz_min = args.min_mz
-    mz_max = args.max_mz
-    rt_min = args.min_rt
-    rt_max = args.max_rt
-    rts = np.array([float(x.split("_")[1]) for x in columns])
-    mzs = np.array([float(x.split("_")[2]) for x in columns])
-    rts_to_keep = (rts >= rt_min) & (rts <= rt_max)
-    mzs_to_keep = (mzs >= mz_min) & (mzs <= mz_max)
-
-    data = data[:, rts_to_keep & mzs_to_keep]
-    columns = columns[rts_to_keep & mzs_to_keep]
-    return data, columns
 
 
 class MakeTensorsMultiprocess:
@@ -269,61 +248,30 @@ class MakeTensorsMultiprocess:
         im.close()
         del im
 
+def round_data(data_matrix, pool_data, n_cpus, dframe_list, decimals=4):
+    # Round values to 2 decimals
+    data_matrix = np.round(np.nan_to_num(data_matrix), decimals)
+    pool_data = np.round(np.nan_to_num(pool_data), decimals)
 
-def delete_rows_csr(mat, indices):
-    """
-    Remove the rows denoted by ``indices`` form the CSR sparse matrix ``mat``.
-    """
-    if not isinstance(mat, csr_matrix):
-        raise ValueError("works only for CSR format -- use .tocsr() first")
-    indices = list(indices)
-    mask = np.ones(mat.shape[0], dtype=bool)
-    mask[indices] = False
-    return mat[mask]
+    pool = multiprocessing.Pool(int(n_cpus), maxtasksperchild=1)
+    fun = MultiKeepNotFunctionsSparse(keep_only_not_zeros_sparse, data=dframe_list[0], cols=dframe_list[1], nums=dframe_list[2],
+                                      threshold=0, n_processes=np.ceil(data_matrix.shape[1] / int(1e5)))
+    notzeros = pool.map(fun.process, range(len(dframe_list[0])))
 
+    new_columns = np.array([x for x in np.concatenate([x[0] for x in notzeros])])
+    not_zeros_col = np.array([x for x in np.concatenate([x[1] for x in notzeros])])
 
-def adjust_tensors(list_matrices, max_features, args_dict):
-    # TODO VERIFY THAT THE ADJUSTMENTS ARE CORRECT; everything is appended to the high end of the tensor, is it correct?
-    # MIGHT CAUSE IMPORTANT BATCH EFFECTS IF NOT RIGHT
-    n_parents = max_features['parents']
-    max_rt = max_features['max_rt']
-    max_mz = max_features['max_mz']
-    # TODO could be parallelized if worth it
-    for j, matrices in enumerate(list_matrices):
-        with tqdm(total=len(matrices), position=0, leave=True) as pbar:
-            for i, matrix in enumerate(matrices):
-                # matrix = data_matrix[0][0]
-                if n_parents - len(matrix) > 0:
-                    logging.warning(
-                        f'mz{args_dict.mz_bin} rt{args_dict.rt_bin} mzp{args_dict.mz_bin_post} rtp{args_dict.rt_bin_post} : {label} had different number of min_mz_parent')
-                    pbar.update(1)
-                    continue
-
-                # https://stackoverflow.com/questions/6844998/is-there-an-efficient-way-of-concatenating-scipy-sparse-matrices
-                # hstack of csc matrices should be faster than coo (worst) or csr
-                for x in list(matrix.keys()):
-                    if max_mz - matrix[x].shape[0] > 0:
-                        matrix[x] = csc_matrix(
-                            vstack((
-                                matrix[x], np.zeros((int((max_mz - matrix[x].shape[0])), matrix[x].shape[1])))
-                            ))
-                    else:
-                        matrix[x] = csc_matrix(matrix[x])
-                    if max_rt - matrix[x].shape[1] > 0:
-                        matrix[x] = csc_matrix(
-                            hstack((
-                                matrix[x], csc_matrix(np.zeros((matrix[x].shape[0], int((max_rt - matrix[x].shape[1])))))
-                            ))
-                        )
-                    else:
-                        matrix[x] = csc_matrix(matrix[x])
-                matrices[i] = hstack([matrix[x].reshape(1, -1) for x in list(matrix.keys())]).tocsr()
-                del matrix
-                pbar.update(1)
-        list_matrices[j] = matrices
-    print('Tensors are adjusted.')
-    return list_matrices
-
+    data_matrix = data_matrix[:, not_zeros_col]
+    new_columns = new_columns[not_zeros_col]
+    pool_data = pool_data[:, not_zeros_col]
+    # Make sure the columns are all 0
+    try:
+        assert np.all(data_matrix.sum(0) != 0)
+    except AssertionError:
+        print('Not all columns are 0')
+        # exit()
+    print('\Final data shape', data.shape)
+    return data_matrix, pool_data, new_columns
 
 def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
     """
@@ -438,7 +386,7 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
 
     return matrices, new_labels, [f"{mz_min_parent}_{rt}_{mz}" for mz_min_parent in mz_min_parents for rt in rts for mz
                                    in mzs], {'parents': parents, 'max_rt': max_rt, 'max_mz': max_mz}
-    
+   
 
 
 if __name__ == "__main__":
@@ -486,6 +434,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_mz", type=int, default=1200)
     parser.add_argument("--min_rt", type=int, default=140)
     parser.add_argument("--max_rt", type=int, default=320)
+    parser.add_argument("--decimals", type=int, default=-1)
 
     args = parser.parse_args()
     args.combat_corr = 0  # TODO to remove
@@ -545,12 +494,13 @@ if __name__ == "__main__":
     
     batches = [
         # "B15-06-29-2024",
-        'B1-02-02-2024', "B14-06-10-2024", "B13-06-05-2024", "B12-05-31-2024",
+        "B14-06-10-2024", "B13-06-05-2024", "B12-05-31-2024",
         "B11-05-24-2024", "B10-05-03-2024", "B9-04-22-2024",
         "B8-04-15-2024", 'B7-04-03-2024', 'B6-03-29-2024',
         'B5-03-13-2024', 'B4-03-01-2024', 'B3-02-29-2024',
-        'B2-02-21-2024'
+        'B2-02-21-2024', 'B1-02-02-2024'
     ]
+    batches = [f"B15-06-29-2024"]
     dir_inputs = []
     for batch in batches:
         if batch not in batches:
@@ -574,7 +524,6 @@ if __name__ == "__main__":
     else:
         bacteria_to_keep = None
     if args.make_data or not os.path.exists(f'{dir_name}/{args.run_name}'):
-
         data_matrices, labels, max_mzs, max_rts, parents = [], [], [], [], []
         for dir_input in dir_inputs:
             print(f"Processing {dir_input}")
@@ -604,7 +553,7 @@ if __name__ == "__main__":
         # Removes all the columns that are only zeros. Runs in parallel (only with 10% of the cpus)
         if args.align_peaks:
             print("Aligning the data...")
-            peaks_list = pd.read_csv(f"{dir_name}/{args.run_name}/variance_scores.csv", index_col=0)
+            # peaks_list = pd.read_csv(f"{dir_name}/{args.run_name}/variance_scores.csv", index_col=0)
             data_matrix = msalign(data_matrix.columns, data_matrix.values)
         os.makedirs(f'{dir_name}/{args.run_name}', exist_ok=True)
         dump(data_matrix, open(matrix_filename, 'wb'))
@@ -637,8 +586,7 @@ if __name__ == "__main__":
 
     new_columns = np.array([x for x in np.concatenate([x[0] for x in notzeros])])
     not_zeros_col = np.array([x for x in np.concatenate([x[1] for x in notzeros])])
-    # zeros_cols = np.array([x for x in range(len(columns)) if x not in not_zeros_col])
-    # not_zeros_col = np.array([x for x in np.concatenate([x[1] for x in notzeros])])
+
     data_matrix = data_matrix[:, not_zeros_col]
     # Make sure the columns are all 0
     try:
@@ -734,7 +682,6 @@ if __name__ == "__main__":
     print('\nComplete data shape', data.shape)
 
     data, columns = crop_data(data, columns, args)
-    dump(columns, open(columns_filename_no_zeros, 'wb'))
     # Save columns
 
     args.mutual_info_path = f'{dir_name}/{args.run_name}/{args.feature_selection}_scores.csv'
@@ -764,9 +711,14 @@ if __name__ == "__main__":
         )
         features = features.index
 
-    # Round values to 2 decimals
-    data = np.round(np.nan_to_num(data), 2)
-    pool_data = np.round(np.nan_to_num(pool_data), 2)
+    dframe_list = split_sparse(data, cols_per_split=int(1e4), columns=new_columns)
+    
+    if args.decimals > 0:
+        data, pool_data, new_columns = round_data(data, pool_data, n_cpus, dframe_list, decimals=args.decimals)
+    dump(new_columns, open(columns_filename_no_zeros, 'wb'))
+
+    pool.close()
+    pool.join()
 
     # Make dataframes for BERNN
     # First column: sample IDs

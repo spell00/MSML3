@@ -86,7 +86,10 @@ def log_ord(data, uniques, path, scaler_name, run=None):
              'concs': unique_concs
             }, path, scaler_name, run)
     if unique_labels is not None:
-        log_LDA(LDA, data, {'batches': unique_batches, 'labels': unique_labels}, path, scaler_name)
+        try:
+            log_LDA(LDA, data, {'batches': unique_batches, 'labels': unique_labels}, path, scaler_name)
+        except:
+            print('\n\nLDA failed\n\n')
                     
 
 def pyGPCA(data, group, name, metrics):
@@ -575,7 +578,10 @@ def log_neptune(run, traces, best_scores):
     Log the scores to neptune
     '''
     for g in ['train', 'valid', 'test']:
-        if len(traces[f'acc'][g]) == 0:
+        if type(traces[f'acc'][g]) == list:
+            if len(traces[f'acc'][g]) == 0:
+                continue
+        elif type(traces[f'acc'][g]) != float and type(traces[f'acc'][g]) != np.float64:
             continue
         run[f'{g}/acc'].log(traces[f'acc'][g])
         run[f'{g}/mcc'].log(traces[f'mcc'][g])
