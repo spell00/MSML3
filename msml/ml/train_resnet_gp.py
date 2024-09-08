@@ -454,7 +454,7 @@ class TrainAE:
         wd = params['wd']
         lr = params['lr']
         margin = params['margin']
-        dropout = params['dropout']
+        # dropout = params['dropout']
         scaler_name = params['scaler']
 
         self.args.scaler = scale

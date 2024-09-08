@@ -24,19 +24,21 @@ def read_csv(csv_file, num_rows=1000, n_cols=1000):
         else:
             progress_bar = tqdm(csv_reader, desc="Reading CSV")
         for row_num, row in enumerate(csv_reader):
+            if n_cols != -1:
+                row = np.array(row)[:n_cols]
+            else:
+                row = np.array(row)
             if row_num == 0:
                 if num_rows == -1:
                     num_rows = sum(1 for _ in open(csv_file, 'rb'))
                 else:
                     num_rows = min(num_rows, sum(1 for _ in open(csv_file, 'rb')))
+                if n_cols != -1:
+                    row = np.array(row)[:n_cols]
                 data_num = np.empty((num_rows-1, len(row)-3))
                 data_str = np.empty((num_rows-1, 3), dtype=object)
                 header = row
                 continue
-            if n_cols != -1:
-                row = np.array(row)[:n_cols]
-            else:
-                row = np.array(row)
             if num_rows != -1:
                 if row_num >= num_rows:
                     break

@@ -26,15 +26,11 @@ from tqdm import tqdm
 # import nibabel as nib
 import warnings
 # import queue
-from features_selection import get_feature_selection_method
-from features_selection_sparse import keep_only_not_zeros_sparse, keep_not_zeros_sparse, \
-    process_sparse_data, count_array, make_lists, split_sparse, MultiKeepNotFunctionsSparse, \
-    process_sparse_data_supervised
+from features_selection_sparse import count_array, make_lists
 from scipy.signal import find_peaks
 from statsmodels.nonparametric.smoothers_lowess import lowess
 from msalign import msalign
 from functools import reduce
-from sklearn.preprocessing import minmax_scale as scale
 from scipy import sparse
 # import copyfile
 from shutil import copyfile

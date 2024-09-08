@@ -98,7 +98,8 @@ class MakeTensorsMultiprocess:
         # if label != 'aba_01-03-2024_240222_u002_l':
         #     return None, None, None
         tsv = tsv[tsv.bin_intensity != 0]
-
+        # Drop nans
+        tsv = tsv.dropna(subset=['rt_bin', 'mz_bin', 'bin_intensity'])
         tsv = tsv.drop(['max_parent_mz'], axis=1)
         # tsv['mz_bin'] = tsv['mz_bin'].round(2)
 
@@ -177,7 +178,10 @@ class MakeTensorsMultiprocess:
                 #     final[min_parent] = final[min_parent].astype(spdtypes)
                 # final[min_parent] = final[min_parent].sparse.to_dense()
             if self.log2 == 'inloop':
-                final[min_parent].loc[mz].loc[rt] += np.log1p(intensity)
+                try:
+                    final[min_parent].loc[mz].loc[rt] += np.log1p(intensity)
+                except:
+                    print(min_parent, mz, rt, intensity)
             else:
                 final[min_parent].loc[mz].loc[rt] += intensity
             # if self.is_sparse:
@@ -500,7 +504,7 @@ if __name__ == "__main__":
         'B5-03-13-2024', 'B4-03-01-2024', 'B3-02-29-2024',
         'B2-02-21-2024', 'B1-02-02-2024'
     ]
-    batches = [f"B15-06-29-2024"]
+    # batches = [f"B15-06-29-2024"]
     dir_inputs = []
     for batch in batches:
         if batch not in batches:
