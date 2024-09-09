@@ -114,18 +114,19 @@ def analyze_processing_time(directory, file_type='raw'):
     plt.savefig(f"{directory}/summary/{file_type}/processing_time_boxplot.png")
     plt.close()
 
+if __name__ == '__main__':
 
-# Replace 'your_directory_path' with the actual path to the directory you want to analyze
-directory_path = 'resources/bacteries_2024/B15-06-29-2024'
-os.makedirs(f"{directory_path}/summary", exist_ok=True)
-file_types = ['raw', 'mzdb/200spd', 'tsv/mz10/rt10/200spd/ms2/all', 'tsv/mz0.1/rt10/200spd/ms2/all']
+    # Replace 'your_directory_path' with the actual path to the directory you want to analyze
+    directory_path = 'resources/bacteries_2024/B15-06-29-2024'
+    os.makedirs(f"{directory_path}/summary", exist_ok=True)
+    file_types = ['raw', 'mzdb/200spd', 'tsv/mz10/rt10/200spd/ms2/all', 'tsv/mz0.1/rt10/200spd/ms2/all']
 
-for file_type in file_types:
-    analyze_directory(directory_path, file_type)
-    analyze_processing_time(directory_path, file_type)
-    
-analyze_processing_time(directory_path)
+    for file_type in file_types:
+        analyze_directory(directory_path, file_type)
+        analyze_processing_time(directory_path, file_type)
+        
+    # analyze_processing_time(directory_path)
 
-tsv2df_path = f'resources/bacteries_2024/matrices/mz10/rt10/thr0.0/'\
-                f'200spd/ms2/combat0/shift0/none/loginloop/mutual_info_classif/all'\
-                f'/all_B15_gkf0_mz0-10000rt0-320_5splits'
+    tsv2df_path = f'resources/bacteries_2024/matrices/mz10/rt10/thr0.0/'\
+                    f'200spd/ms2/combat0/shift0/none/loginloop/mutual_info_classif/all'\
+                    f'/all_B15_gkf0_mz0-10000rt0-320_5splits'
