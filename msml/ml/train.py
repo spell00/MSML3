@@ -21,7 +21,6 @@ from sklearn.metrics import matthews_corrcoef as MCC
 from sklearn.metrics import accuracy_score as ACC
 from scipy import stats
 from log_shap import log_shap
-import xgboost
 import matplotlib.pyplot as plt
 # import pipeline from sklearn
 from sklearn.pipeline import Pipeline
@@ -401,11 +400,13 @@ class Train:
             lists['labels']['valid'] += [valid_labels]
             lists['labels']['test'] += [test_labels]
 
-            if self.args.model_name == 'xgboost':
+            if self.args.model_name == 'xgboost' and 'cuda' in self.args.device:
+                gpu_id = int(self.args.device.split(':')[-1])
                 m = self.model(
-                    # tree_method="hist", 
-                    device='cuda'
-                    )
+                    device=f'cuda:{gpu_id}'
+                )
+            elif self.args.model_name == 'xgboost' and 'cuda' not in self.args.device:
+                m = self.model()
             else:
                 m = self.model()
             m.set_params(**param_grid)
@@ -413,7 +414,6 @@ class Train:
                 m = OneVsRestClassifier(m)
             
             eval_set = [(valid_data.values, lists['classes']['valid'][-1])]
-
             m.fit(train_data, lists['classes']['train'][-1], eval_set=eval_set, verbose=True)
 
             self.dump_model(h, m, scaler_name, lists)
@@ -527,7 +527,27 @@ class Train:
         lists, posurines_df = self.save_confusion_matrices(all_data, lists, run)
         if np.mean(lists['mcc']['valid']) > np.mean(self.best_scores['mcc']['valid']):
             self.save_roc_curves(lists, run)
-            log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path)
+            if self.args.log_shap:
+                print('log shap')
+                if self.args.model_name == 'xgboost' and 'cuda' in self.args.device:
+                    gpu_id = int(self.args.device.split(':')[-1])
+                    m = self.model(
+                        device=f'cuda:{gpu_id}'
+                    )
+                elif self.args.model_name == 'xgboost' and 'cuda' not in self.args.device:
+                    m = self.model()
+                else:
+                    m = self.model()
+                # Remove early_stopping_rounds from param_grid
+                param_grid.pop('early_stopping_rounds', None)
+                param_grid['n_estimators'] = best_iteration[-1]
+
+                m.set_params(**param_grid)
+                if self.args.ovr:
+                    m = OneVsRestClassifier(m)
+
+                m.fit(train_data, lists['classes']['train'][-1], verbose=True)
+                log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path)
             # save the features kept
             with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl', 'wb') as f:
                 pickle.dump(data_list['test']['inputs'].columns, f)
@@ -701,11 +721,13 @@ class Train:
         lists['classes']['train'] = np.array([np.argwhere(l == self.unique_labels)[0][0] for l in train_labels])
         lists['labels']['train'] = train_labels
 
-        if self.args.model_name == 'xgboost':
+        if self.args.model_name == 'xgboost' and 'cuda' in self.args.device:
+            gpu_id = int(self.args.device.split(':')[-1])
             m = self.model(
-                # tree_method="hist", 
-                device='cuda'
-                )
+                device=f'cuda:{gpu_id}'
+            )
+        elif self.args.model_name == 'xgboost' and 'cuda' not in self.args.device:
+            m = self.model()
         else:
             m = self.model()
         m.set_params(**param_grid)

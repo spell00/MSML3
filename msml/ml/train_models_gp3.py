@@ -67,6 +67,8 @@ if __name__ == '__main__':
     parser.add_argument("--max_rt", type=int, default=1000)
     parser.add_argument("--low_ram", type=int, default=0)
     parser.add_argument("--remove_bad_samples", type=int, default=0)
+    parser.add_argument("--device", type=str, default='cuda')
+    parser.add_argument("--log_shap", type=int, default=1)
 
     args = parser.parse_args()
     if args.mz < 1:
@@ -268,6 +270,7 @@ if __name__ == '__main__':
         ]
     elif args.model_name == 'xgboost':
         import xgboost
+        from train_xgboost import Train
         cfr = xgboost.XGBClassifier
         space = [
             Real(0, 0.5, 'uniform', name='threshold'),
