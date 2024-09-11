@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import mlflow
 import matplotlib.cm as cm
 from PIL import Image
+import xgboost
 
 def interactions_mean_matrix(shap_interactions, run, group):
     # Get absolute mean of matrices
@@ -258,20 +259,27 @@ def log_explainer(model, x_df, labels, group, run, bins, log_path):
     unique_labels = np.unique(labels)
     # The explainer doesn't like tensors, hence the f function
     f = lambda x: model.predict(x)
-    # try:
-    explainer = shap.LinearExplainer(model, x_df, 
+    try:
+        explainer = shap.LinearExplainer(model, x_df, 
                                      max_evals=2 * x_df.shape[1] + 1)
+    except:
+        explainer = shap.TreeExplainer(model)
+        # model.set_param({"device": "cuda:0"})
+        # dtrain = xgboost.DMatrix(x_df, label=labels)
+        # shap_values = model.predict(dtrain, pred_contribs=True)
+        # shap_interaction_values = model.predict(dtrain, pred_interactions=True)
     # except:
     #     explainer = shap.LinearExplainer(model.estimators_[0], x_df, max_evals=2 * x_df.shape[1] + 1)
 
     # Get the shap values from my test data
     shap_values = explainer(x_df)
-    
     if len(unique_labels) == 2:
         shap_values_df = pd.DataFrame(
             np.c_[shap_values.base_values, shap_values.values], 
             columns=['bv'] + list(x_df.columns)
         )
+        # Remove shap values that are 0
+        shap_values_df = shap_values_df.loc[:, (shap_values_df != 0).any(axis=0)]
         shap_values_df = shap_values_df.abs()
         shap_values_df = shap_values_df.sum(0)
         total = shap_values_df.sum()
@@ -325,6 +333,8 @@ def log_explainer(model, x_df, labels, group, run, bins, log_path):
                 np.c_[shap_values.base_values[:, i], shap_values.values[:, :, i]], 
                 columns=['bv'] + list(x_df.columns)
             )
+            # Remove shap values that are 0
+            shap_values_df = shap_values_df.loc[:, (shap_values_df != 0).any(axis=0)]
             shap_values_df = shap_values_df.abs()
             shap_values_df = shap_values_df.sum(0)
             total = shap_values_df.sum()
@@ -372,25 +382,22 @@ def log_explainer(model, x_df, labels, group, run, bins, log_path):
             except:
                 pass
 
-    if x_df.shape[1] <= 1000:
-        make_barplot(x_df, labels, shap_values[:, :, 0], 
-                    group, run, 'LinearExplainer', mlops='neptune')
-
-        # Summary plot
-        make_summary_plot(x_df, shap_values[:, :, 0], group, run, 
-                        'LinearExplainer', mlops='neptune')
-
-        make_beeswarm_plot(shap_values[:, :, 0], group, run,
-                            'LinearExplainer', mlops='neptune')
-        make_heatmap(shap_values[:, :, 0], group, run,
-                    'LinearExplainer', mlops='neptune')
-
-        # mask = np.array([np.argwhere(x[0] == 1)[0][0] for x in cats])
-        # make_group_difference_plot(x_df.sum(1).to_numpy(), mask, group, run, 'LinearExplainer', mlops='neptune')
-        make_bar_plot(x_df, shap_values[0], group, run,
-                    'LinearExplainer', mlops='neptune')
-        make_force_plot(x_df, shap_values[0], x_df.columns, 
-                        group, run, 'LinearExplainer', mlops='neptune')
+    # if x_df.shape[1] <= 1000:
+    #     make_barplot(x_df, labels, shap_values[:, :, 0], 
+    #                 group, run, 'LinearExplainer', mlops='neptune')
+    #     # Summary plot
+    #     make_summary_plot(x_df, shap_values[:, :, 0], group, run, 
+    #                     'LinearExplainer', mlops='neptune')
+    #     make_beeswarm_plot(shap_values[:, :, 0], group, run,
+    #                         'LinearExplainer', mlops='neptune')
+    #     make_heatmap(shap_values[:, :, 0], group, run,
+    #                 'LinearExplainer', mlops='neptune')
+    #     # mask = np.array([np.argwhere(x[0] == 1)[0][0] for x in cats])
+    #     # make_group_difference_plot(x_df.sum(1).to_numpy(), mask, group, run, 'LinearExplainer', mlops='neptune')
+    #     make_bar_plot(x_df, shap_values[0], group, run,
+    #                 'LinearExplainer', mlops='neptune')
+    #     make_force_plot(x_df, shap_values[0], x_df.columns, 
+    #                     group, run, 'LinearExplainer', mlops='neptune')
 
 
 def log_kernel_explainer(model, x_df, misclassified, 

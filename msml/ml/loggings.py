@@ -952,7 +952,7 @@ def make_graph(metrics, metric, category, cols, title, path, run):
     plt.savefig(f'{path}_cv.png')
     plt.close()
     run[f'{category}/{metric}_cv'].upload(f'{path}_cv.png')
-    
+
 
 def make_total_graph_total_batch(valid_metrics, test_metrics, metric, title, path, run):
     # Prepare data for plotting
@@ -1066,6 +1066,16 @@ def plot_bars(args, run, bacteria_cols):
             'valid_cv': valid_metrics_batch_cv,
             'test_cv': test_metrics_batch_cv,
         }
+        # save valid_metrics_batch and valid_metrics_batch_cv
+        # valid_metrics_batch_df = pd.DataFrame(valid_metrics_batch)
+        # valid_metrics_batch_df.to_csv(f'{path}/valid_{args.exp_name}_{metric}_by_batch.csv')
+        valid_metrics_batch_cv_df = pd.DataFrame(valid_metrics_batch_cv)
+        valid_metrics_batch_cv_df.to_csv(f'{path}/valid_{args.exp_name}_{metric}_by_batch_cv.csv')
+        # save test_metrics_batch and test_metrics_batch_cv
+        # test_metrics_batch_df = pd.DataFrame(test_metrics_batch)
+        # test_metrics_batch_df.to_csv(f'{path}/test_{args.exp_name}_{metric}_by_batch.csv')
+        test_metrics_batch_cv_df = pd.DataFrame(test_metrics_batch_cv)
+        test_metrics_batch_cv_df.to_csv(f'{path}/test_{args.exp_name}_{metric}_by_batch_cv.csv')
 
         make_graph(metrics_bact, metric, 'Bacterium', bacteria_cols,
                    f'{metric} by Bacterium. Total valid: {total_valid:.2f}, test: {total_test:.2f}', 
