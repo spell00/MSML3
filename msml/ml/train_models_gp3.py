@@ -269,8 +269,24 @@ if __name__ == '__main__':
             Categorical(['minmax2', 'l2', 'l1', 'zscore'], name="scaler"),
         ]
     elif args.model_name == 'xgboost':
+        print('XGBOOST')
         import xgboost
-        from train_xgboost import Train
+        from train import Train
+        cfr = xgboost.XGBClassifier
+        space = [
+            Real(0, 0.5, 'uniform', name='threshold'),
+            # Integer(0, 1, 'uniform', name='n_aug'),
+            Real(0, 0.5, 'uniform', name='p'),
+            Real(0, 0.5, 'uniform', name='g'),
+            Integer(4, 5, 'uniform', name='max_depth'), # BEST WAS DEFAULT
+            Real(10, 20, 'uniform', name='early_stopping_rounds'), # 
+            Integer(100, 150, 'uniform', name='n_estimators'),
+            # Categorical(['binary:logistic'], name='objective'),
+            Categorical(['minmax2'], name="scaler"),
+        ]
+    elif args.model_name == 'xgboostex':
+        import xgboost
+        from train_xgboost_extmem import Train
         cfr = xgboost.XGBClassifier
         space = [
             Real(0, 0.5, 'uniform', name='threshold'),
