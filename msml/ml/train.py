@@ -414,7 +414,7 @@ class Train:
                 m = OneVsRestClassifier(m)
             
             eval_set = [(valid_data.values, lists['classes']['valid'][-1])]
-            m.fit(train_data, lists['classes']['train'][-1], eval_set=eval_set, verbose=True)
+            m.fit(xgboost.DMatrix(train_data), lists['classes']['train'][-1], eval_set=eval_set, verbose=True)
 
             self.dump_model(h, m, scaler_name, lists)
             best_iteration += [m.best_iteration]
