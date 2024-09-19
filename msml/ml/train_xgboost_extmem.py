@@ -21,18 +21,146 @@ from sklearn.metrics import matthews_corrcoef as MCC
 from sklearn.metrics import accuracy_score as ACC
 from scipy import stats
 from log_shap import log_shap
+import xgboost
 import matplotlib.pyplot as plt
 # import pipeline from sklearn
 from sklearn.pipeline import Pipeline
 from utils import columns_stats_over0
-import xgboost
 
 import sys
+# import cupy
 
 def get_size_in_mb(obj):
     size_in_bytes = sys.getsizeof(obj)
     size_in_mb = size_in_bytes / (1024 * 1024)
     return size_in_mb
+
+def score(predictions, labels):
+    return ACC(labels, predictions)
+
+class IterForDMatrix(xgboost.core.DataIter):
+    """A data iterator for XGBoost DMatrix.
+
+    `reset` and `next` are required for any data iterator, other functions here
+    are utilites for demonstration's purpose.
+
+    """
+
+    def __init__(self, matrix, unique_labels):
+        """Generate some random data for demostration.
+
+        Actual data can be anything that is currently supported by XGBoost.
+        """
+        self.rows = matrix.shape[0]
+        self.cols = matrix.shape[1]
+        chunksize = 100
+
+        # Split the matrix into data and labels
+        self._data = [matrix[x:x+chunksize] for x in range(0, len(matrix), chunksize)]
+        self._labels = [matrix.index[x:x+chunksize] for x in range(0, len(matrix), chunksize)]
+        self._labels = [np.array([np.argwhere(l.split('_')[0] == unique_labels)[0][0] for l in x]) for x in self._labels]
+        # self._weights = [rng.uniform(size=self.rows)]
+        self._weights = [np.random.random(self._labels[x].shape[0]) for x in range(len(self._labels))]
+
+        self.it = 0  # set iterator to 0
+
+        super().__init__(cache_prefix=os.path.join('.cache'))
+
+    def as_array(self):
+        # return cupy.concatenate(self._data)
+        return np.concatenate(self._data)
+
+
+    def as_array_labels(self):
+        # return cupy.concatenate(self._labels)
+        return np.concatenate(self._labels)
+
+    def as_array_weights(self):
+        # return cupy.concatenate(self._weights)
+        return np.concatenate(self._weights)
+
+    def data(self):
+        """Utility function for obtaining current batch of data."""
+        return self._data[self.it]
+
+    def labels(self):
+        """Utility function for obtaining current batch of label."""
+        return self._labels[self.it]
+
+    def weights(self):
+        return self._weights[self.it]
+
+    def reset(self):
+        """Reset the iterator"""
+        self.it = 0
+
+    def next(self, input_data):
+        """Yield next batch of data."""
+        if self.it == len(self._data):
+            # Return 0 when there's no more batch.
+            return 0
+        input_data(data=self.data(), label=self.labels(), weight=self.weights())
+        self.it += 1
+        return 1
+
+
+from sklearn.datasets import load_svmlight_file, dump_svmlight_file
+class IterForDMatrixDisk(xgboost.core.DataIter):
+    """A data iterator for XGBoost DMatrix.
+
+    `reset` and `next` are required for any data iterator, other functions here
+    are utilites for demonstration's purpose.
+
+    """
+
+    def __init__(self, matrix, unique_labels):
+        """Generate some random data for demostration.
+
+        Actual data can be anything that is currently supported by XGBoost.
+        """
+        self.rows = matrix.shape[0]
+        self.cols = matrix.shape[1]
+        chunksize = 100
+
+        # Split the matrix into data and labels
+        data = [matrix[x:x+chunksize] for x in range(0, len(matrix), chunksize)]
+        labels = [matrix.index[x:x+chunksize] for x in range(0, len(matrix), chunksize)]
+        labels = [np.array([np.argwhere(l.split('_')[0] == unique_labels)[0][0] for l in x]) for x in labels]
+       
+        # Save the data chunks to disk as svm files
+        os.makedirs('.cache', exist_ok=True)
+        for i, (chunk, label) in enumerate(zip(data, labels)):
+            dump_svmlight_file(chunk, label, f'.cache/data_{i}.csv')
+        
+        self._weights = [np.random.random(labels[x].shape[0]) for x in range(len(labels))]
+
+        self.it = 0  # set iterator to 0
+        self.len_data = len(data)
+        
+        super().__init__(cache_prefix=os.path.join('.cache'))
+
+
+    def data(self):
+        """Utility function for obtaining current batch of data."""
+        return load_svmlight_file(f'.cache/data_{self.it}.csv')
+
+    def weights(self):
+        return self._weights[self.it]
+
+    def reset(self):
+        """Reset the iterator"""
+        self.it = 0
+
+    def next(self, input_data):
+        """Yield next batch of data."""
+        if self.it == self.len_data:
+            # Return 0 when there's no more batch.
+            return 0
+        X, y = self.data()
+        input_data(data=X, label=y, weight=self.weights())
+        self.it += 1
+        return 1
+
 
 class Train:
     def __init__(self, name, model, data, uniques, hparams_names,
@@ -107,7 +235,6 @@ class Train:
         param_grid = {}
         scaler_name = 'none'
         hparams = {}
-        n_aug = 0
         for name, param in zip(self.hparams_names, h_params):
             hparams[name] = param
             if name == 'features_cutoff':
@@ -207,6 +334,7 @@ class Train:
             model['batches'] = run['batches'] = '-'.join(self.uniques['batches'])
             model['context'] = run['context'] = 'train'
             model['remove_bad_samples'] = run['remove_bad_samples'] = self.args.remove_bad_samples
+            model['colsample_bytree'] = run['colsample_bytree'] = self.args.colsample_bytree
         else:
             model = None
             run = None
@@ -229,7 +357,11 @@ class Train:
             'inference': False,
         }
 
-        columns_stats_over0(all_data['inputs']['all'], infos, False)
+
+        columns_stats_over0(all_data['inputs']['all'],
+                            infos,
+                            {'mz': self.args.mz, 'rt': self.args.rt},
+                            False)
 
         # save scaler
         os.makedirs(f'{self.log_path}/saved_models/', exist_ok=True)
@@ -248,9 +380,9 @@ class Train:
         while h < self.args.n_repeats:                                
             lists['names']['posurines'] += [np.array([x.split('_')[-2] for x in all_data['names']['urinespositives']])]
             lists['batches']['posurines'] += [all_data['batches']['urinespositives']]
+
             if self.args.train_on == 'all':
                 if self.args.groupkfold:
-                    # skf = GroupShuffleSplit(n_splits=5, random_state=seed)
                     skf = StratifiedGroupKFold(n_splits=len(np.unique(all_data['batches']['all'])), shuffle=True, random_state=42)
                     train_nums = np.arange(0, len(all_data['labels']['all']))
                     splitter = skf.split(train_nums, self.data['labels']['all'], all_data['batches']['all'])
@@ -333,6 +465,7 @@ class Train:
                 test_labels, valid_labels = valid_labels[test_inds], valid_labels[valid_inds]
                 test_batches, valid_batches = valid_batches[test_inds], valid_batches[valid_inds]
                 test_names, valid_names = valid_names[test_inds], valid_names[valid_inds]
+
             elif self.args.train_on == 'all_highs':
                 # keep all concs for train to be all_data['concs']['all'] == 'h'        
                 train_inds = np.argwhere(all_data['concs']['all'] == 'h').flatten()
@@ -385,13 +518,12 @@ class Train:
             lists['unique_batches']['test'] += [list(np.unique(test_batches))]
 
             if n_aug > 0:
+                train_data = train_data.fillna(0)
                 train_data = augment_data(train_data, n_aug, p, g)
-                train_data = np.nan_to_num(train_data)
                 train_labels = np.concatenate([train_labels] * (n_aug + 1))
                 train_batches = np.concatenate([train_batches] * (n_aug + 1))
             else:
                 train_data = train_data.fillna(0)
-                train_data = train_data.values
             valid_data = valid_data.fillna(0)
             test_data = test_data.fillna(0)
 
@@ -402,61 +534,80 @@ class Train:
             lists['labels']['valid'] += [valid_labels]
             lists['labels']['test'] += [test_labels]
 
-            if self.args.model_name == 'xgboost' and 'cuda' in self.args.device:
-                gpu_id = int(self.args.device.split(':')[-1])
-                m = self.model(
-                    device=f'cuda:{gpu_id}'
-                )
-            elif self.args.model_name == 'xgboost' and 'cuda' not in self.args.device:
-                m = self.model()
-            else:
-                m = self.model()
-            m.set_params(**param_grid)
-            if self.args.ovr:
-                m = OneVsRestClassifier(m)
+            train_it = IterForDMatrixDisk(train_data, self.unique_labels)
+            valid_it = IterForDMatrixDisk(valid_data, self.unique_labels)
+            test_it = IterForDMatrixDisk(test_data, self.unique_labels)
             
-            eval_set = [(valid_data.values, lists['classes']['valid'][-1])]
-            m.fit(train_data, lists['classes']['train'][-1], eval_set=eval_set, verbose=True)
-
+            dtrain = xgboost.DMatrix(train_it, label=lists['classes']['train'][-1])
+            dvalid = xgboost.DMatrix(valid_it, label=lists['classes']['valid'][-1])
+            dtest = xgboost.DMatrix(test_it, label=lists['classes']['test'][-1])
+            eval_set = [(dtrain, 'train'), (dvalid, 'eval')]
+            early_stop = xgboost.callback.EarlyStopping(int(param_grid['early_stopping_rounds']))
+            if self.args.model_name == 'xgboostex' and 'cuda' in self.args.device:
+                if len(self.args.device.split(':')) == 0:
+                    gpu_id = 0
+                else:
+                    gpu_id = self.args.device.split(':')[1]
+                m = xgboost.train({
+                    "tree_method": "gpu_hist",
+                    "gpu_id": gpu_id,
+                    "max_depth": param_grid['max_depth'],
+                    "objective": 'multi:softprob',
+                    "num_class": len(self.unique_labels),
+                    "colsample_bytree": self.args.colsample_bytree,
+                    "subsample": 0.1,
+                    "sampling_method": "gradient_based",
+                    "max_bin": self.args.max_bin,
+                }, dtrain, 
+                num_boost_round=param_grid['n_estimators'],
+                evals=eval_set,
+                callbacks=[early_stop],
+                verbose_eval=True)
+            elif self.args.model_name == 'xgboostex':
+                dtrain = xgboost.DMatrix(train_data, label=lists['classes']['train'][-1])
+                dvalid = xgboost.DMatrix(valid_data, label=lists['classes']['valid'][-1])
+                dtest = xgboost.DMatrix(test_data, label=lists['classes']['test'][-1])
+                eval_set = [(dtrain, 'train'), (dvalid, 'eval')]
+                m = xgboost.train({
+                    "tree_method": "hist",
+                    "max_depth": param_grid['max_depth'],
+                    "early_stopping_rounds": param_grid['early_stopping_rounds'],
+                    "num_boost_round": param_grid['n_estimators'],
+                    "objective": 'multi:softprob',
+                    "num_class": len(self.unique_labels),
+                }, dtrain, 
+                num_boost_round=param_grid['n_estimators'],
+                evals=eval_set,
+                callbacks=[early_stop],
+                verbose_eval=True)
+            else:
+                exit('Wrong model, only xgboost can be used')
+            
             self.dump_model(h, m, scaler_name, lists)
             best_iteration += [m.best_iteration]
-            try:
-                lists['acc']['train'] += [m.score(train_data, lists['classes']['train'][-1])]
-                lists['preds']['train'] += [m.predict(train_data)]
-            except:
-                lists['acc']['train'] += [m.score(train_data.values, lists['classes']['train'][-1])]
-                lists['preds']['train'] += [m.predict(train_data.values)]
+            train_preds = m.predict(dtrain).argmax(axis=1)
+            valid_preds = m.predict(dvalid).argmax(axis=1)
+            test_preds = m.predict(dtest).argmax(axis=1)
+            lists['acc']['train'] += [ACC(train_preds, lists['classes']['train'][-1])]
+            lists['preds']['train'] += [train_preds]
 
-            try:
-                lists['acc']['valid'] += [m.score(valid_data, lists['classes']['valid'][-1])]
-                lists['acc']['test'] += [m.score(test_data, lists['classes']['test'][-1])]
-                lists['preds']['valid'] += [m.predict(valid_data)]
-                lists['preds']['test'] += [m.predict(test_data)]
-            except:
-                lists['acc']['valid'] += [m.score(valid_data.values, lists['classes']['valid'][-1])]
-                lists['acc']['test'] += [m.score(test_data.values, lists['classes']['test'][-1])]
-                lists['preds']['valid'] += [m.predict(valid_data.values)]
-                lists['preds']['test'] += [m.predict(test_data.values)]
+            lists['acc']['valid'] += [ACC(valid_preds, lists['classes']['valid'][-1])]
+            lists['acc']['test'] += [ACC(test_preds, lists['classes']['test'][-1])]
+            lists['preds']['valid'] += [valid_preds]
+            lists['preds']['test'] += [test_preds]
 
             if all_data['inputs']['urinespositives'].shape[0] > 0:
+                durines = xgboost.DMatrix(all_data['inputs']['urinespositives'])
+                lists['preds']['posurines'] += [m.predict(durines).argmax(axis=1)]
                 try:
-                    lists['preds']['posurines'] += [m.predict(all_data['inputs']['urinespositives'])]
-                    try:
-                        lists['proba']['posurines'] += [m.predict_proba(all_data['inputs']['urinespositives'])]
-                    except:
-                        pass
-
+                    lists['proba']['posurines'] += [m.predict(durines)]
                 except:
-                    lists['preds']['posurines'] += [m.predict(all_data['inputs']['urinespositives'].values)]
-                    try:
-                        lists['proba']['posurines'] += [m.predict_proba(all_data['inputs']['urinespositives'].values)]
-                    except:
-                        pass
+                    pass
 
             try:
-                lists['proba']['train'] += [m.predict_proba(train_data)]
-                lists['proba']['valid'] += [m.predict_proba(valid_data)]
-                lists['proba']['test'] += [m.predict_proba(test_data)]
+                lists['proba']['train'] += [m.predict(dtrain)]
+                lists['proba']['valid'] += [m.predict(dvalid)]
+                lists['proba']['test'] += [m.predict(dtest)]
                 data_list = {
                     'valid': {
                         'inputs': valid_data,
@@ -530,25 +681,6 @@ class Train:
         if np.mean(lists['mcc']['valid']) > np.mean(self.best_scores['mcc']['valid']):
             self.save_roc_curves(lists, run)
             if self.args.log_shap:
-                print('log shap')
-                if self.args.model_name == 'xgboost' and 'cuda' in self.args.device:
-                    gpu_id = int(self.args.device.split(':')[-1])
-                    m = self.model(
-                        device=f'cuda:{gpu_id}'
-                    )
-                elif self.args.model_name == 'xgboost' and 'cuda' not in self.args.device:
-                    m = self.model()
-                else:
-                    m = self.model()
-                # Remove early_stopping_rounds from param_grid
-                param_grid.pop('early_stopping_rounds', None)
-                param_grid['n_estimators'] = best_iteration[-1]
-
-                m.set_params(**param_grid)
-                if self.args.ovr:
-                    m = OneVsRestClassifier(m)
-
-                m.fit(train_data, lists['classes']['train'][-1], verbose=True)
                 log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path)
             # save the features kept
             with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl', 'wb') as f:
@@ -723,20 +855,22 @@ class Train:
         lists['classes']['train'] = np.array([np.argwhere(l == self.unique_labels)[0][0] for l in train_labels])
         lists['labels']['train'] = train_labels
 
-        if self.args.model_name == 'xgboost' and 'cuda' in self.args.device:
-            gpu_id = int(self.args.device.split(':')[-1])
+        if self.args.model_name == 'xgboost' and self.args.device == 'cuda':
             m = self.model(
-                device=f'cuda:{gpu_id}'
-            )
-        elif self.args.model_name == 'xgboost' and 'cuda' not in self.args.device:
-            m = self.model()
+                # tree_method="hist", 
+                device='cuda'
+                )
         else:
             m = self.model()
+        
         m.set_params(**param_grid)
         if self.args.ovr:
             m = OneVsRestClassifier(m)
 
-        m.fit(train_data, lists['classes']['train'], verbose=True)
+        if self.args.model_name != 'xgboost':
+            m.fit(train_data, lists['classes']['train'], verbose=True)
+        else:
+            train_data = xgboost.DMatrix(train_data, label=lists['classes']['train'])
         try:
             lists['acc']['train'] = m.score(train_data, lists['classes']['train'])
             lists['preds']['train'] = m.predict(train_data)

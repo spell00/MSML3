@@ -27,8 +27,9 @@ np.random.seed(42)
 
 from skopt import gp_minimize
 import matplotlib.pyplot as plt
-from dataset import get_data
+from dataset import get_data_all
 from train import Train
+import cupy
 
 if __name__ == '__main__':
     # Load data
@@ -67,6 +68,12 @@ if __name__ == '__main__':
     parser.add_argument("--max_rt", type=int, default=1000)
     parser.add_argument("--low_ram", type=int, default=0)
     parser.add_argument("--remove_bad_samples", type=int, default=0)
+    parser.add_argument("--device", type=str, default='cuda')
+    parser.add_argument("--log_shap", type=int, default=1)
+    parser.add_argument("--fp", type=str, default=32)
+    parser.add_argument("--colsample_bytree", type=float, default=1.0)
+    parser.add_argument("--max_bin", type=int, default=256)
+    parser.add_argument("--sparse_matrix", type=int, default=0)
 
     args = parser.parse_args()
     if args.mz < 1:
@@ -126,7 +133,15 @@ if __name__ == '__main__':
         f'log{args.log}/{args.features_selection}/{exp}'
 
     data, unique_labels, unique_batches, unique_manips, \
-                        unique_urines, unique_concs = get_data(path, args)
+                        unique_urines, unique_concs = get_data_all(path, args)
+    
+    if args.fp == 'float16':
+        data['inputs']['all'] = data['inputs']['all'].astype(np.float16)
+    elif args.fp == 'float32':
+        data['inputs']['all'] = data['inputs']['all'].astype(np.float32)
+    elif args.fp == 'float64':
+        data['inputs']['all'] = data['inputs']['all'].astype(np.float64)
+        
 
     uniques = {
         'labels': unique_labels,
@@ -267,7 +282,40 @@ if __name__ == '__main__':
             Categorical(['minmax2', 'l2', 'l1', 'zscore'], name="scaler"),
         ]
     elif args.model_name == 'xgboost':
+        print('XGBOOST')
         import xgboost
+        from train_xgboost import Train
+        cfr = xgboost.XGBClassifier
+        space = [
+            Real(0, 0.5, 'uniform', name='threshold'),
+            # Integer(0, 1, 'uniform', name='n_aug'),
+            Real(0, 0.5, 'uniform', name='p'),
+            Real(0, 0.5, 'uniform', name='g'),
+            Integer(4, 5, 'uniform', name='max_depth'), # BEST WAS DEFAULT
+            Real(10, 20, 'uniform', name='early_stopping_rounds'), # 
+            Integer(100, 150, 'uniform', name='n_estimators'),
+            # Categorical(['binary:logistic'], name='objective'),
+            Categorical(['minmax2'], name="scaler"),
+        ]
+    elif args.model_name == 'xgboostda':
+        print('XGBOOST DASK')
+        import xgboost
+        from train_xgboost_dask import Train
+        cfr = xgboost.XGBClassifier
+        space = [
+            Real(0, 0.5, 'uniform', name='threshold'),
+            # Integer(0, 1, 'uniform', name='n_aug'),
+            Real(0, 0.5, 'uniform', name='p'),
+            Real(0, 0.5, 'uniform', name='g'),
+            Integer(4, 5, 'uniform', name='max_depth'), # BEST WAS DEFAULT
+            Real(10, 20, 'uniform', name='early_stopping_rounds'), # 
+            Integer(100, 150, 'uniform', name='n_estimators'),
+            # Categorical(['binary:logistic'], name='objective'),
+            Categorical(['minmax2'], name="scaler"),
+        ]
+    elif args.model_name == 'xgboostex':
+        import xgboost
+        from train_xgboost_extmem import Train
         cfr = xgboost.XGBClassifier
         space = [
             Real(0, 0.5, 'uniform', name='threshold'),

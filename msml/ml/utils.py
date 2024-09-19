@@ -28,6 +28,22 @@ def augment_data(X_train, n_aug, p=0, g=0):
                 X_train2 = np.concatenate([X_train2, tmp], 0)
             else:
                 X_train2 = tmp
+        columns = X_train.columns
+        train_indices = np.array(X_train.index)
+        # Check for duplicated indices
+        if np.sum(X_train.index.duplicated()) > 0:
+            duplicated_indices = np.argwhere(X_train.index.duplicated())[0]
+            for ind in duplicated_indices:
+                train_indices[ind] = f"{train_indices[ind]}_0"
+
+        # train_indices = np.concatenate([train_indices] * (n_aug + 1))
+        # Add copy num, 0 for original
+        train_indices = [f"{x}_{i}" for i in range(n_aug + 1) for x in train_indices]
+
+        assert len(train_indices) == np.unique(train_indices).shape[0]
+
+        X_train2 = pd.DataFrame(X_train2, columns=columns, index=train_indices)
+
     return X_train2
 
 def augment_data2(X_train, n_aug, p=0, g=0):
@@ -275,7 +291,7 @@ def scale_data(scale, data, device='cpu'):
 
     return data, scaler
 
-def columns_stats_over0(df, name, inference=False):
+def columns_stats_over0(df, name, bins, inference=False):
     """
     This column takes a pandas DataFrame and returns the number of non-zero columns
     per binning type
@@ -327,8 +343,8 @@ def columns_stats_over0(df, name, inference=False):
         a.set_xticklabels(a.get_xticklabels(), rotation=45)
     # For RT, only display every 10th value
     mz_keys = list(mz_children_counts.keys())
-    ax[1].set_xticks([i for i in range(len(mz_keys)) if i % 10 == 0])
-    ax[1].set_xticklabels([mz_keys[i] for i in range(len(mz_keys)) if i % 10 == 0], rotation=45)
+    ax[1].set_xticks([i for i in range(len(mz_keys)) if i % bins['mz'] == 0])
+    ax[1].set_xticklabels([mz_keys[i] for i in range(len(mz_keys)) if i % bins['mz'] == 0], rotation=45)
 
     plt.tight_layout()
 

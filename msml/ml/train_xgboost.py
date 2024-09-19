@@ -21,11 +21,11 @@ from sklearn.metrics import matthews_corrcoef as MCC
 from sklearn.metrics import accuracy_score as ACC
 from scipy import stats
 from log_shap import log_shap
+import xgboost
 import matplotlib.pyplot as plt
 # import pipeline from sklearn
 from sklearn.pipeline import Pipeline
 from utils import columns_stats_over0
-import xgboost
 
 import sys
 
@@ -33,6 +33,9 @@ def get_size_in_mb(obj):
     size_in_bytes = sys.getsizeof(obj)
     size_in_mb = size_in_bytes / (1024 * 1024)
     return size_in_mb
+
+def score(predictions, labels):
+    return ACC(labels, predictions)
 
 class Train:
     def __init__(self, name, model, data, uniques, hparams_names,
@@ -108,6 +111,8 @@ class Train:
         scaler_name = 'none'
         hparams = {}
         n_aug = 0
+        p = 0
+        g = 0
         for name, param in zip(self.hparams_names, h_params):
             hparams[name] = param
             if name == 'features_cutoff':
@@ -124,7 +129,6 @@ class Train:
                 g = param
             else:
                 param_grid[name] = param
-        # n_aug = 0  # TODO TO REMOVE
         hparams['threshold'] = param_grid['threshold'] = threshold = 0
         other_params = {
             'p': p, 
@@ -207,11 +211,17 @@ class Train:
             model['batches'] = run['batches'] = '-'.join(self.uniques['batches'])
             model['context'] = run['context'] = 'train'
             model['remove_bad_samples'] = run['remove_bad_samples'] = self.args.remove_bad_samples
+            model['colsample_bytree'] = run['colsample_bytree'] = self.args.colsample_bytree
+            model['sparse_matrix'] = run['sparse_matrix'] = self.args.sparse_matrix
+            model['max_bin'] = run['max_bin'] = self.args.max_bin
+            model['device'] = run['device'] = self.args.device
+
         else:
             model = None
             run = None
 
         all_data, scaler = scale_data(scaler_name, all_data)
+        
 
         infos = {
             'scaler': scaler_name,
@@ -229,7 +239,10 @@ class Train:
             'inference': False,
         }
 
-        columns_stats_over0(all_data['inputs']['all'], infos, False)
+        columns_stats_over0(all_data['inputs']['all'],
+                            infos,
+                            {'mz': self.args.mz, 'rt': self.args.rt},
+                            False)
 
         # save scaler
         os.makedirs(f'{self.log_path}/saved_models/', exist_ok=True)
@@ -297,7 +310,6 @@ class Train:
                       test_data.iloc[test_to_keep], test_labels[test_to_keep], test_batches[test_to_keep], test_names[test_to_keep]
 
                 valid_inds, test_inds = valid_inds[valid_to_keep], test_inds[test_to_keep]
-
             elif self.args.train_on == 'all_lows':
                 # keep all concs for train to be all_data['concs']['all'] == 'l'        
                 train_inds = np.argwhere(all_data['concs']['all'] == 'l').flatten()
@@ -385,13 +397,12 @@ class Train:
             lists['unique_batches']['test'] += [list(np.unique(test_batches))]
 
             if n_aug > 0:
+                train_data = train_data.fillna(0)
                 train_data = augment_data(train_data, n_aug, p, g)
-                train_data = np.nan_to_num(train_data)
                 train_labels = np.concatenate([train_labels] * (n_aug + 1))
                 train_batches = np.concatenate([train_batches] * (n_aug + 1))
             else:
                 train_data = train_data.fillna(0)
-                train_data = train_data.values
             valid_data = valid_data.fillna(0)
             test_data = test_data.fillna(0)
 
@@ -402,61 +413,99 @@ class Train:
             lists['labels']['valid'] += [valid_labels]
             lists['labels']['test'] += [test_labels]
 
-            if self.args.model_name == 'xgboost' and 'cuda' in self.args.device:
-                gpu_id = int(self.args.device.split(':')[-1])
-                m = self.model(
-                    device=f'cuda:{gpu_id}'
+            if self.args.sparse_matrix:
+                dtrain = xgboost.DMatrix(
+                    train_data.astype(pd.SparseDtype("float", 0)),
+                    label=lists['classes']['train'][-1]
                 )
-            elif self.args.model_name == 'xgboost' and 'cuda' not in self.args.device:
-                m = self.model()
+                dvalid = xgboost.DMatrix(
+                    valid_data.astype(pd.SparseDtype("float", 0)),
+                    label=lists['classes']['valid'][-1]
+                )
+                dtest = xgboost.DMatrix(
+                    test_data.astype(pd.SparseDtype("float", 0)),
+                    label=lists['classes']['test'][-1]
+                )
             else:
-                m = self.model()
-            m.set_params(**param_grid)
-            if self.args.ovr:
-                m = OneVsRestClassifier(m)
+                dtrain = xgboost.DMatrix(train_data, label=lists['classes']['train'][-1])
+                dvalid = xgboost.DMatrix(valid_data, label=lists['classes']['valid'][-1])
+                dtest = xgboost.DMatrix(test_data, label=lists['classes']['test'][-1])
+            # Check for NaNs in the DMatrix
+            try:
+                assert np.isnan(dtrain.get_label()).any() == False 
+                assert np.isnan(dvalid.get_label()).any() == False 
+                assert np.isnan(dtest.get_label()).any() == False
+            except:
+                print('Nans in DMatrix')
+                exit
+                         
+            eval_set = [(dtrain, 'train'), (dvalid, 'eval')]
+            early_stop = xgboost.callback.EarlyStopping(int(param_grid['early_stopping_rounds']))
+            if self.args.model_name == 'xgboost' and 'cuda' in self.args.device:
+                if len(self.args.device.split(':')) == 0:
+                    gpu_id = 0
+                else:
+                    gpu_id = self.args.device.split(':')[1]
+                m = xgboost.train({
+                    "tree_method": "gpu_hist",
+                    "gpu_id": gpu_id,
+                    "max_depth": param_grid['max_depth'],
+                    "objective": 'multi:softprob',
+                    "num_class": len(self.unique_labels),
+                    "colsample_bytree": self.args.colsample_bytree,
+                    "max_bin": self.args.max_bin,
+                    # "subsample": 0.1,
+                    # "sampling_method": "gradient_based",
+                }, dtrain, 
+                num_boost_round=param_grid['n_estimators'],
+                evals=eval_set,
+                callbacks=[early_stop],
+                verbose_eval=True)
+            elif self.args.model_name == 'xgboost':
+                dtrain = xgboost.DMatrix(train_data, label=lists['classes']['train'][-1])
+                dvalid = xgboost.DMatrix(valid_data, label=lists['classes']['valid'][-1])
+                dtest = xgboost.DMatrix(test_data, label=lists['classes']['test'][-1])
+                eval_set = [(dtrain, 'train'), (dvalid, 'eval')]
+                m = xgboost.train({
+                    "tree_method": "hist",
+                    "max_depth": param_grid['max_depth'],
+                    "early_stopping_rounds": param_grid['early_stopping_rounds'],
+                    "num_boost_round": param_grid['n_estimators'],
+                    "objective": 'multi:softprob',
+                    "num_class": len(self.unique_labels),
+                }, dtrain, 
+                num_boost_round=param_grid['n_estimators'],
+                evals=eval_set,
+                callbacks=[early_stop],
+                verbose_eval=True)
+            else:
+                exit('Wrong model, only xgboost can be used')
             
-            eval_set = [(valid_data.values, lists['classes']['valid'][-1])]
-            m.fit(train_data, lists['classes']['train'][-1], eval_set=eval_set, verbose=True)
-
             self.dump_model(h, m, scaler_name, lists)
             best_iteration += [m.best_iteration]
-            try:
-                lists['acc']['train'] += [m.score(train_data, lists['classes']['train'][-1])]
-                lists['preds']['train'] += [m.predict(train_data)]
-            except:
-                lists['acc']['train'] += [m.score(train_data.values, lists['classes']['train'][-1])]
-                lists['preds']['train'] += [m.predict(train_data.values)]
+            train_preds = m.predict(dtrain).argmax(axis=1)
+            valid_preds = m.predict(dvalid).argmax(axis=1)
+            test_preds = m.predict(dtest).argmax(axis=1)
+            lists['acc']['train'] += [ACC(train_preds, lists['classes']['train'][-1])]
+            lists['preds']['train'] += [train_preds]
 
-            try:
-                lists['acc']['valid'] += [m.score(valid_data, lists['classes']['valid'][-1])]
-                lists['acc']['test'] += [m.score(test_data, lists['classes']['test'][-1])]
-                lists['preds']['valid'] += [m.predict(valid_data)]
-                lists['preds']['test'] += [m.predict(test_data)]
-            except:
-                lists['acc']['valid'] += [m.score(valid_data.values, lists['classes']['valid'][-1])]
-                lists['acc']['test'] += [m.score(test_data.values, lists['classes']['test'][-1])]
-                lists['preds']['valid'] += [m.predict(valid_data.values)]
-                lists['preds']['test'] += [m.predict(test_data.values)]
+            lists['acc']['valid'] += [ACC(valid_preds, lists['classes']['valid'][-1])]
+            lists['acc']['test'] += [ACC(test_preds, lists['classes']['test'][-1])]
+            lists['preds']['valid'] += [valid_preds]
+            lists['preds']['test'] += [test_preds]
 
             if all_data['inputs']['urinespositives'].shape[0] > 0:
+                durines = xgboost.DMatrix(all_data['inputs']['urinespositives'])
+                lists['preds']['posurines'] += [m.predict(durines).argmax(axis=1)]
                 try:
-                    lists['preds']['posurines'] += [m.predict(all_data['inputs']['urinespositives'])]
-                    try:
-                        lists['proba']['posurines'] += [m.predict_proba(all_data['inputs']['urinespositives'])]
-                    except:
-                        pass
-
+                    lists['proba']['posurines'] += [m.predict(durines)]
                 except:
-                    lists['preds']['posurines'] += [m.predict(all_data['inputs']['urinespositives'].values)]
-                    try:
-                        lists['proba']['posurines'] += [m.predict_proba(all_data['inputs']['urinespositives'].values)]
-                    except:
-                        pass
+                    pass
 
             try:
-                lists['proba']['train'] += [m.predict_proba(train_data)]
-                lists['proba']['valid'] += [m.predict_proba(valid_data)]
-                lists['proba']['test'] += [m.predict_proba(test_data)]
+                lists['proba']['train'] += [m.predict(dtrain)]
+                lists['proba']['valid'] += [m.predict(dvalid)]
+                lists['proba']['test'] += [m.predict(dtest)]
                 data_list = {
                     'valid': {
                         'inputs': valid_data,
@@ -482,14 +531,14 @@ class Train:
                         'labels': lists['classes']['valid'][-1],
                         'preds': lists['preds']['valid'][-1],
                         'batches': valid_batches,
-                        'names': all_data['names']['valid']
+                        'names': lists['names']['valid'][-1]
                     },
                     'test': {
                         'inputs': test_data,
                         'labels': lists['classes']['test'][-1],
                         'preds': lists['preds']['test'][-1],
                         'batches': test_batches,
-                        'names': all_data['names']['test']
+                        'names': lists['names']['test'][-1]
                     }
                 }
             lists['mcc']['train'] += [MCC(lists['classes']['train'][-1], lists['preds']['train'][-1])]
@@ -530,26 +579,7 @@ class Train:
         if np.mean(lists['mcc']['valid']) > np.mean(self.best_scores['mcc']['valid']):
             self.save_roc_curves(lists, run)
             if self.args.log_shap:
-                print('log shap')
-                if self.args.model_name == 'xgboost' and 'cuda' in self.args.device:
-                    gpu_id = int(self.args.device.split(':')[-1])
-                    m = self.model(
-                        device=f'cuda:{gpu_id}'
-                    )
-                elif self.args.model_name == 'xgboost' and 'cuda' not in self.args.device:
-                    m = self.model()
-                else:
-                    m = self.model()
-                # Remove early_stopping_rounds from param_grid
-                param_grid.pop('early_stopping_rounds', None)
-                param_grid['n_estimators'] = best_iteration[-1]
-
-                m.set_params(**param_grid)
-                if self.args.ovr:
-                    m = OneVsRestClassifier(m)
-
-                m.fit(train_data, lists['classes']['train'][-1], verbose=True)
-                log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path)
+                log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path, self.unique_labels)
             # save the features kept
             with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl', 'wb') as f:
                 pickle.dump(data_list['test']['inputs'].columns, f)
@@ -723,20 +753,22 @@ class Train:
         lists['classes']['train'] = np.array([np.argwhere(l == self.unique_labels)[0][0] for l in train_labels])
         lists['labels']['train'] = train_labels
 
-        if self.args.model_name == 'xgboost' and 'cuda' in self.args.device:
-            gpu_id = int(self.args.device.split(':')[-1])
+        if self.args.model_name == 'xgboost' and self.args.device == 'cuda':
             m = self.model(
-                device=f'cuda:{gpu_id}'
-            )
-        elif self.args.model_name == 'xgboost' and 'cuda' not in self.args.device:
-            m = self.model()
+                # tree_method="hist", 
+                device='cuda'
+                )
         else:
             m = self.model()
+        
         m.set_params(**param_grid)
         if self.args.ovr:
             m = OneVsRestClassifier(m)
 
-        m.fit(train_data, lists['classes']['train'], verbose=True)
+        if self.args.model_name != 'xgboost':
+            m.fit(train_data, lists['classes']['train'], verbose=True)
+        else:
+            train_data = xgboost.DMatrix(train_data, label=lists['classes']['train'])
         try:
             lists['acc']['train'] = m.score(train_data, lists['classes']['train'])
             lists['preds']['train'] = m.predict(train_data)
