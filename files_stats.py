@@ -5,6 +5,8 @@ import seaborn as sns
 
 def analyze_directory(directory, file_type):
     # Collect file information
+    if 'tsv' in file_type:
+        file_type += '/all'
     files_info = []
     for file in os.listdir(f'{directory}/{file_type}'):
         file_path = os.path.join(directory, file_type, file)
@@ -15,6 +17,8 @@ def analyze_directory(directory, file_type):
     # Create a DataFrame
     df = pd.DataFrame(files_info, columns=['Filename', 'Size (MB)', 'Extension'])
     
+    if 'tsv' in file_type:
+        file_type = file_type.replace('/all', '')
     # Basic statistics
     total_files = len(df)
     total_size = df['Size (MB)'].sum()
@@ -37,7 +41,16 @@ def analyze_directory(directory, file_type):
     plt.xlabel('File Size (MB)')
     plt.ylabel('Number of Files')
     os.makedirs(f"{directory}/summary/{file_type}", exist_ok=True)
+    plt.rc('font', size=16)
+    plt.rc('axes', titlesize=16)
+    plt.rc('axes', labelsize=16)
+    plt.rc('xtick', labelsize=16)
+    plt.rc('ytick', labelsize=16)
+    plt.rc('legend', fontsize=16)
+    plt.rc('figure', titlesize=16)
+    
     plt.savefig(f"{directory}/summary/{file_type}/hist.png")
+    # Increase all font sizes
     plt.close()
 
     # Plot boxplot of file sizes
@@ -47,6 +60,15 @@ def analyze_directory(directory, file_type):
     sns.boxplot(x=df['Size (MB)'], color='orange')
     plt.title(f'Boxplot of File Sizes for {file_type}')
     plt.xlabel('File Size (MB)')
+
+    plt.rc('font', size=16)
+    plt.rc('axes', titlesize=16)
+    plt.rc('axes', labelsize=16)
+    plt.rc('xtick', labelsize=16)
+    plt.rc('ytick', labelsize=16)
+    plt.rc('legend', fontsize=16)
+    plt.rc('figure', titlesize=16)
+    
     plt.savefig(f"{directory}/summary/{file_type}/boxplot.png")
     plt.close()
 
@@ -77,17 +99,17 @@ def analyze_processing_time(directory, file_type='raw'):
         smallest_processing_time = df.loc[df['time(s)'].idxmin()]
         colname = 'time(s)'
     elif file_type.__contains__('tsv'):
-        df = pd.read_csv(f'msml/mzdb2tsv/processing_times.csv')
+        df = pd.read_csv(f'{directory}/{file_type}/time.csv')
         # Remove rows with missing values
         df = df.dropna()
         # Drop rows with processing time less than 0
-        df = df[df['time(s)'] >= 0]
+        df = df[df['Time'] >= 0]
 
-        total_processing_time = df['time(s)'].sum()
-        avg_processing_time = df['time(s)'].mean()
-        largest_processing_time = df.loc[df['time(s)'].idxmax()]
-        smallest_processing_time = df.loc[df['time(s)'].idxmin()]
-        colname = 'time(s)'
+        total_processing_time = df['Time'].sum()
+        avg_processing_time = df['Time'].mean()
+        largest_processing_time = df.loc[df['Time'].idxmax()]
+        smallest_processing_time = df.loc[df['Time'].idxmin()]
+        colname = 'Time'
     else:
         raise ValueError('Invalid file type. Please choose from: raw, mzdb/200spd, tsv/mz10/rt10/200spd/ms2/all, tsv/mz0.1/rt10/200spd/ms2/all')
 
@@ -119,7 +141,7 @@ if __name__ == '__main__':
     # Replace 'your_directory_path' with the actual path to the directory you want to analyze
     directory_path = 'resources/bacteries_2024/B15-06-29-2024'
     os.makedirs(f"{directory_path}/summary", exist_ok=True)
-    file_types = ['raw', 'mzdb/200spd', 'tsv/mz10/rt10/200spd/ms2/all', 'tsv/mz0.1/rt10/200spd/ms2/all']
+    file_types = ['raw', 'mzdb/200spd', 'tsv/mz10/rt10/200spd/ms2']
 
     for file_type in file_types:
         analyze_directory(directory_path, file_type)
