@@ -6,8 +6,7 @@ NEPTUNE_PROJECT_NAME = "MSML-Bacteria"
 NEPTUNE_MODEL_NAME = 'MSMLBAC-'
 import copy
 import json
-import dask
-import xgboost
+import os
 import neptune
 import pickle
 import numpy as np
@@ -22,20 +21,13 @@ from sklearn.metrics import matthews_corrcoef as MCC
 from sklearn.metrics import accuracy_score as ACC
 from scipy import stats
 from log_shap import log_shap
-from xgboost import dask as dxgb
-import dask.array as da
-import dask.dataframe as dd
-import dask.distributed
-from dask_cuda import LocalCUDACluster
+import xgboost
 import matplotlib.pyplot as plt
 # import pipeline from sklearn
 from sklearn.pipeline import Pipeline
 from utils import columns_stats_over0
-import pynvml
-import sys
 
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+import sys
 
 def get_size_in_mb(obj):
     size_in_bytes = sys.getsizeof(obj)
@@ -49,11 +41,6 @@ class Train:
     def __init__(self, name, model, data, uniques, hparams_names,
                  log_path, args, logger, log_neptune, mlops='None',
                  binary_path=None):
-
-        pynvml.nvmlInit()
-        n_gpus = pynvml.nvmlDeviceGetCount()
-        cluster = LocalCUDACluster(n_workers=n_gpus)
-        self.client = dask.distributed.Client(cluster)
         self.log_neptune = log_neptune
         self.best_roc_score = -1
         self.args = args
@@ -142,7 +129,6 @@ class Train:
                 g = param
             else:
                 param_grid[name] = param
-        # n_aug = 0  # TODO TO REMOVE
         hparams['threshold'] = param_grid['threshold'] = threshold = 0
         other_params = {
             'p': p, 
@@ -225,11 +211,17 @@ class Train:
             model['batches'] = run['batches'] = '-'.join(self.uniques['batches'])
             model['context'] = run['context'] = 'train'
             model['remove_bad_samples'] = run['remove_bad_samples'] = self.args.remove_bad_samples
+            model['colsample_bytree'] = run['colsample_bytree'] = self.args.colsample_bytree
+            model['sparse_matrix'] = run['sparse_matrix'] = self.args.sparse_matrix
+            model['max_bin'] = run['max_bin'] = self.args.max_bin
+            model['device'] = run['device'] = self.args.device
+
         else:
             model = None
             run = None
 
         all_data, scaler = scale_data(scaler_name, all_data)
+        
 
         infos = {
             'scaler': scaler_name,
@@ -420,38 +412,61 @@ class Train:
             lists['labels']['train'] += [train_labels]
             lists['labels']['valid'] += [valid_labels]
             lists['labels']['test'] += [test_labels]
-            
-            train_dask = dd.from_pandas(train_data, chunksize=1000)
-            valid_dask = dd.from_pandas(valid_data, chunksize=1000)
-            test_dask = dd.from_pandas(test_data, chunksize=1000)
-            train_classes = da.from_array(lists['classes']['train'][-1], chunks=1000)
-            valid_classes = da.from_array(lists['classes']['valid'][-1], chunks=1000)
-            test_classes = da.from_array(lists['classes']['test'][-1], chunks=1000)
 
-            dtrain = dxgb.DaskDMatrix(self.client, train_dask, label=train_classes)
-            dvalid = dxgb.DaskDMatrix(self.client, valid_dask, label=valid_classes)
-            dtest = dxgb.DaskDMatrix(self.client, test_dask, label=test_classes)
-
+            if self.args.sparse_matrix:
+                dtrain = xgboost.DMatrix(
+                    train_data.astype(pd.SparseDtype("float", 0)),
+                    label=lists['classes']['train'][-1]
+                )
+                dvalid = xgboost.DMatrix(
+                    valid_data.astype(pd.SparseDtype("float", 0)),
+                    label=lists['classes']['valid'][-1]
+                )
+                dtest = xgboost.DMatrix(
+                    test_data.astype(pd.SparseDtype("float", 0)),
+                    label=lists['classes']['test'][-1]
+                )
+            else:
+                dtrain = xgboost.DMatrix(train_data, label=lists['classes']['train'][-1])
+                dvalid = xgboost.DMatrix(valid_data, label=lists['classes']['valid'][-1])
+                dtest = xgboost.DMatrix(test_data, label=lists['classes']['test'][-1])
+            # Check for NaNs in the DMatrix
+            try:
+                assert np.isnan(dtrain.get_label()).any() == False 
+                assert np.isnan(dvalid.get_label()).any() == False 
+                assert np.isnan(dtest.get_label()).any() == False
+            except:
+                print('Nans in DMatrix')
+                exit
+                         
             eval_set = [(dtrain, 'train'), (dvalid, 'eval')]
             early_stop = xgboost.callback.EarlyStopping(int(param_grid['early_stopping_rounds']))
-            if self.args.model_name == 'xgboostda' and 'cuda' in self.args.device:
-                m = dxgb.train(self.client, {
-                    "tree_method": "hist",
-                    "device": 'cuda',
+            if self.args.model_name == 'xgboost' and 'cuda' in self.args.device:
+                if len(self.args.device.split(':')) == 0:
+                    gpu_id = 0
+                else:
+                    gpu_id = self.args.device.split(':')[1]
+                m = xgboost.train({
+                    "tree_method": "gpu_hist",
+                    "gpu_id": gpu_id,
                     "max_depth": param_grid['max_depth'],
                     "objective": 'multi:softprob',
                     "num_class": len(self.unique_labels),
+                    "colsample_bytree": self.args.colsample_bytree,
+                    "max_bin": self.args.max_bin,
+                    # "subsample": 0.1,
+                    # "sampling_method": "gradient_based",
                 }, dtrain, 
                 num_boost_round=param_grid['n_estimators'],
                 evals=eval_set,
                 callbacks=[early_stop],
                 verbose_eval=True)
-            elif self.args.model_name == 'xgboostda':
-                dtrain = dxgb.DaskDMatrix(train_data, label=lists['classes']['train'][-1])
-                dvalid = dxgb.DaskDMatrix(valid_data, label=lists['classes']['valid'][-1])
-                dtest = dxgb.DaskDMatrix(test_data, label=lists['classes']['test'][-1])
+            elif self.args.model_name == 'xgboost':
+                dtrain = xgboost.DMatrix(train_data, label=lists['classes']['train'][-1])
+                dvalid = xgboost.DMatrix(valid_data, label=lists['classes']['valid'][-1])
+                dtest = xgboost.DMatrix(test_data, label=lists['classes']['test'][-1])
                 eval_set = [(dtrain, 'train'), (dvalid, 'eval')]
-                m = dxbg.train({
+                m = xgboost.train({
                     "tree_method": "hist",
                     "max_depth": param_grid['max_depth'],
                     "early_stopping_rounds": param_grid['early_stopping_rounds'],
@@ -465,16 +480,12 @@ class Train:
                 verbose_eval=True)
             else:
                 exit('Wrong model, only xgboost can be used')
-
+            
             self.dump_model(h, m, scaler_name, lists)
-            best_iteration += [m['booster'].best_iteration]
-            dtrain = xgboost.DMatrix(train_data, label=train_classes)
-            dvalid = xgboost.DMatrix(valid_data, label=valid_classes)
-            dtest = xgboost.DMatrix(test_data, label=test_classes)
-            durines = xgboost.DMatrix(all_data['inputs']['urinespositives'])
-            train_preds = m['booster'].predict(dtrain).argmax(axis=1)
-            valid_preds = m['booster'].predict(dvalid).argmax(axis=1)
-            test_preds = m['booster'].predict(dtest).argmax(axis=1)
+            best_iteration += [m.best_iteration]
+            train_preds = m.predict(dtrain).argmax(axis=1)
+            valid_preds = m.predict(dvalid).argmax(axis=1)
+            test_preds = m.predict(dtest).argmax(axis=1)
             lists['acc']['train'] += [ACC(train_preds, lists['classes']['train'][-1])]
             lists['preds']['train'] += [train_preds]
 
@@ -485,16 +496,16 @@ class Train:
 
             if all_data['inputs']['urinespositives'].shape[0] > 0:
                 durines = xgboost.DMatrix(all_data['inputs']['urinespositives'])
-                lists['preds']['posurines'] += [m['booster'].predict(durines).argmax(axis=1)]
+                lists['preds']['posurines'] += [m.predict(durines).argmax(axis=1)]
                 try:
-                    lists['proba']['posurines'] += [m['booster'].predict(durines)]
+                    lists['proba']['posurines'] += [m.predict(durines)]
                 except:
                     pass
 
             try:
-                lists['proba']['train'] += [m['booster'].predict(dtrain)]
-                lists['proba']['valid'] += [m['booster'].predict(dvalid)]
-                lists['proba']['test'] += [m['booster'].predict(dtest)]
+                lists['proba']['train'] += [m.predict(dtrain)]
+                lists['proba']['valid'] += [m.predict(dvalid)]
+                lists['proba']['test'] += [m.predict(dtest)]
                 data_list = {
                     'valid': {
                         'inputs': valid_data,
@@ -520,14 +531,14 @@ class Train:
                         'labels': lists['classes']['valid'][-1],
                         'preds': lists['preds']['valid'][-1],
                         'batches': valid_batches,
-                        'names': all_data['names']['valid']
+                        'names': lists['names']['valid'][-1]
                     },
                     'test': {
                         'inputs': test_data,
                         'labels': lists['classes']['test'][-1],
                         'preds': lists['preds']['test'][-1],
                         'batches': test_batches,
-                        'names': all_data['names']['test']
+                        'names': lists['names']['test'][-1]
                     }
                 }
             lists['mcc']['train'] += [MCC(lists['classes']['train'][-1], lists['preds']['train'][-1])]
@@ -757,31 +768,31 @@ class Train:
         if self.args.model_name != 'xgboost':
             m.fit(train_data, lists['classes']['train'], verbose=True)
         else:
-            train_data = dxgb.DaskDMatrix(train_data, label=lists['classes']['train'])
+            train_data = xgboost.DMatrix(train_data, label=lists['classes']['train'])
         try:
             lists['acc']['train'] = m.score(train_data, lists['classes']['train'])
-            lists['preds']['train'] = m['booster'].predict(train_data)
+            lists['preds']['train'] = m.predict(train_data)
         except:
             lists['acc']['train'] = m.score(train_data.values, lists['classes']['train'])
-            lists['preds']['train'] = m['booster'].predict(train_data.values)
+            lists['preds']['train'] = m.predict(train_data.values)
 
         if all_data['inputs']['urinespositives'].shape[0] > 0:
             try:
-                lists['preds']['posurines'] = m['booster'].predict(all_data['inputs']['urinespositives'])
+                lists['preds']['posurines'] = m.predict(all_data['inputs']['urinespositives'])
                 try:
-                    lists['proba']['posurines'] = m['booster'].predict_proba(all_data['inputs']['urinespositives'])
+                    lists['proba']['posurines'] = m.predict_proba(all_data['inputs']['urinespositives'])
                 except:
                     pass
 
             except:
-                lists['preds']['posurines'] = m['booster'].predict(all_data['inputs']['urinespositives'].values)
+                lists['preds']['posurines'] = m.predict(all_data['inputs']['urinespositives'].values)
                 try:
-                    lists['proba']['posurines'] = m['booster'].predict_proba(all_data['inputs']['urinespositives'].values)
+                    lists['proba']['posurines'] = m.predict_proba(all_data['inputs']['urinespositives'].values)
                 except:
                     pass
 
         try:
-            lists['proba']['train'] = m['booster'].predict_proba(train_data)
+            lists['proba']['train'] = m.predict_proba(train_data)
         except:
             pass
         lists['mcc']['train'] = MCC(lists['classes']['train'], lists['preds']['train'])

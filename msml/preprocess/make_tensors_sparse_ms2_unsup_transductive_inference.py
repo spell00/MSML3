@@ -35,6 +35,7 @@ from scipy import sparse
 # import copyfile
 from shutil import copyfile
 from utils import adjust_tensors
+from scipy import stats
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(filename='make_tensors_ms2.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
@@ -111,7 +112,13 @@ class MakeTensorsMultiprocess:
         # tsv['mz_bin'] = tsv['mz_bin'].round(2)
 
         min_parents_mz = np.unique(tsv.min_parent_mz)
-        interval = min_parents_mz[1] - min_parents_mz[0]
+        # Find all intervals between min_parents. Then get mode interval
+        intervals = np.diff(min_parents_mz)
+        if len(np.unique(intervals)) > 1:
+            print(f"MUTLIPLE Intervals between min_parents: {np.unique(intervals)}")
+        # Remove from intervals values that are not at an interval distance of the next value
+        intervals = [x for x in intervals if x + interval in intervals or x - interval in intervals]
+        interval = np.round(stats.mode(intervals)[0], 2)
         if self.bins['mz_shift']:
             mz_shift = self.bins['mz_bin_post'] / 2
         else:
@@ -132,16 +139,19 @@ class MakeTensorsMultiprocess:
             else:
                 dtype = "float64"
 
-        final = {min_parent: pd.DataFrame(
-            np.zeros([int(np.ceil(tsv.mz_bin.max() / self.bins['mz_bin_post'])) + 1,
-                      int(np.ceil(tsv.rt_bin.max() / self.bins['rt_bin_post'])) + 1]),
-            dtype=np.float32,
-            columns=np.arange(0, tsv.rt_bin.max() + self.bins['rt_bin_post'], self.bins['rt_bin_post']).round(
-                self.bins['rt_rounding']) - rt_shift,
-            index=np.arange(0, tsv.mz_bin.max() + self.bins['mz_bin_post'], self.bins['mz_bin_post']).round(
-                self.bins['mz_rounding']) - mz_shift
-        ) for min_parent in
-                 np.arange(int(tsv.min_parent_mz.min()), int(tsv.min_parent_mz.max()) + interval, interval)}
+        try:
+            final = {min_parent: pd.DataFrame(
+                np.zeros([int(np.ceil(tsv.mz_bin.max() / self.bins['mz_bin_post'])) + 1,
+                        int(np.ceil(tsv.rt_bin.max() / self.bins['rt_bin_post'])) + 1]),
+                dtype=np.float32,
+                columns=np.arange(0, tsv.rt_bin.max() + self.bins['rt_bin_post'], self.bins['rt_bin_post']).round(
+                    self.bins['rt_rounding']) - rt_shift,
+                index=np.arange(0, tsv.mz_bin.max() + self.bins['mz_bin_post'], self.bins['mz_bin_post']).round(
+                    self.bins['mz_rounding']) - mz_shift
+            ) for min_parent in
+                    np.arange(int(tsv.min_parent_mz.min()), int(tsv.min_parent_mz.max()) + interval, interval)}
+        except:
+            exit('Error creating final dataframe')
         for i in list(final.keys()):
             final[i].index = np.round(final[i].index, self.bins['mz_rounding'])
             final[i].columns = np.round(final[i].columns, self.bins['rt_rounding'])
@@ -149,51 +159,54 @@ class MakeTensorsMultiprocess:
         rt = float(final[min_parent][list(final[min_parent].keys())[0]][0])
         # spdtypes = final[min_parent].dtypes[rt]
         # prev_mz = -1
-        for i, line in enumerate(tsv.values):
-            min_parent, rt, mz, intensity = line
-            if np.isnan(rt) or np.isnan(mz) or np.isnan(min_parent):
-                continue
-            if self.bins['rt_shift']:
-                tmp_rt = np.floor(np.round(rt / self.bins['rt_bin_post'], 8)) * self.bins['rt_bin_post']
-                if rt % (self.bins['rt_bin_post'] / 2) > (self.bins['rt_bin_post'] / 2):
-                    tmp_rt += self.bins['rt_bin_post'] / 2
-                else:
-                    tmp_rt -= self.bins['rt_bin_post'] / 2
-                rt = tmp_rt
-            elif self.bins['rt_bin_post'] != self.bins['rt_bin']:
-                rt = np.round(np.round(rt / self.bins['rt_bin_post'], 8), self.bins['rt_bin_post']) * self.bins['rt_bin_post']
+        try:
+            for i, line in enumerate(tsv.values):
+                min_parent, rt, mz, intensity = line
+                if np.isnan(rt) or np.isnan(mz) or np.isnan(min_parent):
+                    continue
+                if self.bins['rt_shift']:
+                    tmp_rt = np.floor(np.round(rt / self.bins['rt_bin_post'], 8)) * self.bins['rt_bin_post']
+                    if rt % (self.bins['rt_bin_post'] / 2) > (self.bins['rt_bin_post'] / 2):
+                        tmp_rt += self.bins['rt_bin_post'] / 2
+                    else:
+                        tmp_rt -= self.bins['rt_bin_post'] / 2
+                    rt = tmp_rt
+                elif self.bins['rt_bin_post'] != self.bins['rt_bin']:
+                    rt = np.round(np.round(rt / self.bins['rt_bin_post'], 8), self.bins['rt_bin_post']) * self.bins['rt_bin_post']
 
-            if self.bins['mz_shift']:
-                tmp_mz = np.floor(np.round(mz / self.bins['mz_bin_post'], 8)) * self.bins['mz_bin_post']
-                if mz % (self.bins['mz_bin_post'] / 2) > (self.bins['mz_bin_post'] / 2):
-                    tmp_mz += self.bins['mz_bin_post'] / 2
+                if self.bins['mz_shift']:
+                    tmp_mz = np.floor(np.round(mz / self.bins['mz_bin_post'], 8)) * self.bins['mz_bin_post']
+                    if mz % (self.bins['mz_bin_post'] / 2) > (self.bins['mz_bin_post'] / 2):
+                        tmp_mz += self.bins['mz_bin_post'] / 2
+                    else:
+                        tmp_mz -= self.bins['mz_bin_post'] / 2
+                    mz = tmp_mz
+                elif self.bins['mz_bin_post'] != self.bins['mz_bin']:
+                    mz = np.round(np.round(mz / self.bins['mz_bin_post'], 8), self.bins['mz_bin_post']) * self.bins['mz_bin_post']
+                if self.bins['rt_rounding'] != 0:
+                    rt = np.round(rt, self.bins['rt_rounding'])
+                if self.bins['mz_rounding'] != 0:
+                    mz = np.round(mz, self.bins['mz_rounding'])
+                # final[min_parent][mz][rt] += np.log1p(intensity)
+                mz = np.round(float(mz), self.bins['mz_rounding'])
+                rt = np.round(float(rt), self.bins['rt_rounding'])
+                # if self.is_sparse and prev_mz != rt:
+                    # Change todense on mz rather than rt
+                    # if prev_mz != -1:
+                    #     final[min_parent] = final[min_parent].astype(spdtypes)
+                    # final[min_parent] = final[min_parent].sparse.to_dense()
+                if self.log2 == 'inloop':
+                    final[min_parent].loc[mz].loc[rt] += np.log1p(intensity)
                 else:
-                    tmp_mz -= self.bins['mz_bin_post'] / 2
-                mz = tmp_mz
-            elif self.bins['mz_bin_post'] != self.bins['mz_bin']:
-                mz = np.round(np.round(mz / self.bins['mz_bin_post'], 8), self.bins['mz_bin_post']) * self.bins['mz_bin_post']
-            if self.bins['rt_rounding'] != 0:
-                rt = np.round(rt, self.bins['rt_rounding'])
-            if self.bins['mz_rounding'] != 0:
-                mz = np.round(mz, self.bins['mz_rounding'])
-            # final[min_parent][mz][rt] += np.log1p(intensity)
-            mz = np.round(float(mz), self.bins['mz_rounding'])
-            rt = np.round(float(rt), self.bins['rt_rounding'])
-            # if self.is_sparse and prev_mz != rt:
-                # Change todense on mz rather than rt
-                # if prev_mz != -1:
-                #     final[min_parent] = final[min_parent].astype(spdtypes)
-                # final[min_parent] = final[min_parent].sparse.to_dense()
-            if self.log2 == 'inloop':
-                final[min_parent].loc[mz].loc[rt] += np.log1p(intensity)
-            else:
-                final[min_parent].loc[mz].loc[rt] += intensity
-            # if self.is_sparse:
-            #     final[min_parent][rt] = final[min_parent][rt].astype(spdtypes)
-            # del min_parent, rt, mz, intensity, line
-            # prev_mz = mz
-            if self.test_run and i > 10000:
-                break
+                    final[min_parent].loc[mz].loc[rt] += intensity
+                # if self.is_sparse:
+                #     final[min_parent][rt] = final[min_parent][rt].astype(spdtypes)
+                # del min_parent, rt, mz, intensity, line
+                # prev_mz = mz
+                if self.test_run and i > 10000:
+                    break
+        except:
+            exit('Error filling final dataframe')
         for min_parent in final:
             final[min_parent] = final[min_parent].astype(dtype)
         if self.lowess:

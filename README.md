@@ -116,3 +116,7 @@ Domain Accuracy: Should be random (e.g. ~0.5 if 2 batches)
 
 ## REMARKS
 The controls are hard-coded to be named "blanc". That should be change to allow custom names, but that's how it is for the moment
+
+DASK: change the line
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+To represent the number of gpus of the machine used

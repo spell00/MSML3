@@ -14,3 +14,7 @@ statsmodels
 shap
 scipy
 msalign
+pynvml
+dask_cuda
+dask
+cupy

@@ -25,6 +25,7 @@ import matplotlib.pyplot as plt
 # import pipeline from sklearn
 from sklearn.pipeline import Pipeline
 from utils import columns_stats_over0
+import xgboost
 
 import sys
 
@@ -106,6 +107,7 @@ class Train:
         param_grid = {}
         scaler_name = 'none'
         hparams = {}
+        n_aug = 0
         for name, param in zip(self.hparams_names, h_params):
             hparams[name] = param
             if name == 'features_cutoff':
@@ -414,7 +416,7 @@ class Train:
                 m = OneVsRestClassifier(m)
             
             eval_set = [(valid_data.values, lists['classes']['valid'][-1])]
-            m.fit(xgboost.DMatrix(train_data), lists['classes']['train'][-1], eval_set=eval_set, verbose=True)
+            m.fit(train_data, lists['classes']['train'][-1], eval_set=eval_set, verbose=True)
 
             self.dump_model(h, m, scaler_name, lists)
             best_iteration += [m.best_iteration]

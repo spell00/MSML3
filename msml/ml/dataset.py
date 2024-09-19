@@ -13,7 +13,7 @@ def blocks(files, size=65536):
         if not b: break
         yield b
 
-def read_csv(csv_file, num_rows=1000, n_cols=1000):
+def read_csv(csv_file, num_rows=1000, n_cols=1000, fp="float64"):
     # data = np.array([])
     data = []
     with open(csv_file, 'r') as file:
@@ -43,7 +43,11 @@ def read_csv(csv_file, num_rows=1000, n_cols=1000):
                 if row_num >= num_rows:
                     break
 
-            data_num[row_num-1] = row[3:].astype(float)
+            if fp == 'float32':
+                data_num[row_num-1] = row[3:].astype(np.float32)
+            elif fp == 'float16':
+                data_num[row_num-1] = row[3:].astype(np.float16)
+            data_num[row_num-1] = row[3:].astype(np.float16)
             data_str[row_num-1] = row[:3]
             progress_bar.update(1)
             del row
@@ -97,7 +101,10 @@ def get_data_infer(path, args, seed=42):
     for info in ['inputs', 'names', 'labels', 'cats', 'batches', 'manips', 'orders', 'sets', 'urines', 'concs']:
         data[info] = {}
     data[info]['all'] = data[info]['test'] = data[info]['urinespositives'] = np.array([])
-    matrix = read_csv(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
+    matrix = read_csv(csv_file=f"{path}/{args.csv_file}",
+                      num_rows=-1,
+                      n_cols=args.n_features,
+                      fp=args.fp)
     top_features = pd.read_csv(f"{path}/{args.features_file}")
     names = matrix.iloc[:, 0]
     labels = matrix.iloc[:, 1]
@@ -307,7 +314,7 @@ def get_data(path, args, seed=42):
             if args.low_ram:
                 matrix = read_csv_low_ram(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
             else:
-                matrix = read_csv(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
+                matrix = read_csv(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features, fp=args.fp)
             matrix.index = names = matrix.iloc[:, 0]
             names = matrix.iloc[:, 0]
             labels = matrix.iloc[:, 1]
@@ -338,7 +345,7 @@ def get_data(path, args, seed=42):
                              ]
             matrix = matrix.loc[:, columns_to_keep]
             if args.features_selection != 'none':
-                top_features = read_csv(csv_file=f"{path}/{args.features_file}", num_rows=-1, n_cols=args.n_features)
+                top_features = read_csv(csv_file=f"{path}/{args.features_file}", num_rows=-1, n_cols=args.n_features, fp=args.fp)
                 matrix = matrix.loc[:, top_features.iloc[:, 0].values[:args.n_features]]
             else:
                 matrix = matrix.iloc[:, :args.n_features]
@@ -456,6 +463,143 @@ def get_data(path, args, seed=42):
     return data, unique_labels, unique_batches, unique_manips, unique_urines, unique_concs
 
 
+def get_data_all(path, args, seed=42):
+    """
+
+    Args:
+        path: Path where the csvs can be loaded. The folder designated by path needs to contain at least
+                   one file named train_inputs.csv (when using --use_valid=0 and --use_test=0). When using
+                   --use_valid=1 and --use_test=1, it must also contain valid_inputs.csv and test_inputs.csv.
+
+    Returns:
+        data
+    """
+    data = {}
+    unique_labels = np.array([])
+    for info in ['inputs', 'names', 'labels', 'cats', 'batches', 'manips', 'orders', 'sets', 'urines', 'concs']:
+        data[info] = {}
+        for group in ['all']:
+            data[info][group] = np.array([])
+    for group in ['all']:
+        if args.low_ram:
+            matrix = read_csv_low_ram(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
+        else:
+            matrix = read_csv(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features, fp=args.fp)
+        matrix.index = names = matrix.iloc[:, 0]
+        names = matrix.iloc[:, 0]
+        labels = matrix.iloc[:, 1]
+
+        # if args.binary:
+        #     labels = pd.Series(['blanc' if label=='blanc' else 'bact' for label in labels])
+
+        batches = matrix.iloc[:, 2]
+        manips = pd.Series([x.split("_")[2] for x in names])
+        urines = pd.Series([x.split("_")[3] for x in names])
+        concs = pd.Series([x.split("_")[4] if len(x.split("_")) == 5 else 'na' for x in names])
+        unique_batches = batches.unique()
+        unique_manips = manips.unique()
+        unique_urines = urines.unique()
+        unique_concs = concs.unique()
+        # batches = np.stack([np.argwhere(x == unique_batches).squeeze() for x in batches])
+        orders = np.array([0 for _ in batches])
+        matrix = matrix.iloc[:, 3:].fillna(0).astype(float)
+
+        columns = matrix.columns
+        mz_parents = [float(column.split('_')[0]) for column in columns]
+        mzs = [float(column.split('_')[2]) for column in columns]
+        rts = [float(column.split('_')[1]) for column in columns]
+        columns_to_keep = [True if (mzp >= args.min_mz_parent and mzp <= args.max_mz_parent) \
+                            and (mz >= args.min_mz and mz <= args.max_mz) \
+                            and (rt >= args.min_rt and rt <= args.max_rt) \
+                            else False for name, mzp, mz, rt in zip(columns, mz_parents, mzs, rts)
+                            ]
+        matrix = matrix.loc[:, columns_to_keep]
+        if args.features_selection != 'none':
+            top_features = read_csv(csv_file=f"{path}/{args.features_file}", num_rows=-1, n_cols=args.n_features, fp=args.fp)
+            matrix = matrix.loc[:, top_features.iloc[:, 0].values[:args.n_features]]
+        else:
+            matrix = matrix.iloc[:, :args.n_features]
+        if args.remove_bad_samples:
+            # if a file named bad_samples.csv in resources folder, remove those samples
+            print("Removing bad samples")
+            if os.path.exists(f"resources/bad_samples.csv"):
+                bad_samples = pd.read_csv(f"resources/bad_samples.csv", header=None).values.squeeze()
+                mask = np.array([x not in bad_samples for x in names])
+                notmask = np.array([x in bad_samples for x in names])
+                removed = np.array([x for x in names[notmask] if x in bad_samples])
+
+                # assert len(removed) == len(bad_samples) - 2  # 2 samples are in B15 which is not used
+
+                matrix = matrix.loc[mask]
+                names = names[mask]
+                labels = labels[mask]
+                batches = batches[mask]
+                orders = orders[mask]
+                concs = concs[mask]
+                manips = manips[mask]
+                urines = urines[mask]
+
+                print(f"Removed {removed}")
+                assert len(matrix) == len(names) == len(labels) == len(batches) == len(orders) == len(concs) == len(manips) == len(urines)
+                
+        if args.remove_zeros:
+            mask1 = (matrix == 0).mean(axis=0) < 0.1
+            matrix = matrix.loc[:, mask1]
+        if args.log1p:
+            matrix.iloc[:] = np.log1p(matrix.values)
+        matrix.iloc[:] = np.nan_to_num(matrix.values)
+
+        pos = [i for i, name in enumerate(names.values.flatten()) if 'QC' not in name]
+
+        pos = [i for i, name in enumerate(names.values.flatten()) if 'urinespositives' in name]
+        not_pos = [i for i, name in enumerate(names.values.flatten()) if 'urinespositives' not in name]
+        data['inputs']["urinespositives"], data['inputs'][group] = matrix.iloc[pos], matrix.iloc[not_pos]
+        data['names']["urinespositives"], data['names'][group] = names.to_numpy()[pos], names.to_numpy()[not_pos]
+        data['labels']["urinespositives"], data['labels'][group] = labels.to_numpy()[pos], labels.to_numpy()[not_pos]
+        data['batches']["urinespositives"], data['batches'][group] = batches.to_numpy()[pos], batches.to_numpy()[not_pos]
+        data['manips']["urinespositives"], data['manips'][group] = manips.to_numpy()[pos], manips.to_numpy()[not_pos]
+        data['urines']["urinespositives"], data['urines'][group] = urines.to_numpy()[pos], urines.to_numpy()[not_pos]
+        data['concs']["urinespositives"], data['concs'][group] = concs.to_numpy()[pos], concs.to_numpy()[not_pos]
+        data['orders']["urinespositives"], data['orders'][group] = orders[pos], orders[not_pos]
+
+        unique_labels = np.array(np.unique(data['labels'][group]))
+        # place blancs at the end
+        blanc_class = np.argwhere(unique_labels == 'blanc').flatten()[0]
+        unique_labels = np.concatenate((np.delete(unique_labels, blanc_class), ['blanc']))
+
+        data['cats'][group] = np.array(
+            [np.where(x == unique_labels)[0][0] for i, x in enumerate(data['labels'][group])]
+        )
+
+        if args.pool:
+            pool_pos = [i for i, name in enumerate(names.values.flatten()) if 'QC' in name]
+            data['inputs'][f"{group}_pool"] = matrix.iloc[pool_pos]
+            data['names'][f"{group}_pool"] = np.array([f'pool_{i}' for i, _ in enumerate(pool_pos)])
+            data['labels'][f"{group}_pool"] = np.array([f'pool' for _ in pool_pos])
+            data['batches'][f"{group}_pool"] = batches[pool_pos]
+            data['manips'][f"{group}_pool"] = manips[pool_pos]
+            data['urines'][f"{group}_pool"] = urines[pool_pos]
+            data['concs'][f"{group}_pool"] = concs[pool_pos]
+
+            # This is juste to make the pipeline work. Meta should be 0 for the amide dataset
+            data['orders'][f"{group}_pool"] = orders[pool_pos]
+            data['cats'][f"{group}_pool"] = np.array(
+                [len(np.unique(data['labels'][group])) for _ in batches[pool_pos]])
+
+            data['labels'][group] = np.array([x.split('-')[0] for i, x in enumerate(data['labels'][group])])
+            unique_labels = np.concatenate((unique_labels, np.array(['pool'])))
+            data['cats'][group] = np.array(
+                [np.where(x == unique_labels)[0][0] for i, x in enumerate(data['labels'][group])])
+
+    for key in list(data['names'].keys()):
+        data['sets'][key] = np.array([key for _ in data['names'][key]])
+        unique_batches = np.unique(data['batches']['all'])
+        # for group in ['train', 'valid', 'test', 'train_pool', 'valid_pool', 'test_pool', 'all', 'all_pool']:
+        #     data['batches'][group] = np.array([np.argwhere(unique_batches == x)[0][0] for x in data['batches'][group]])
+
+    return data, unique_labels, unique_batches, unique_manips, unique_urines, unique_concs
+
+
 def get_data2(path, args, seed=42):
     """
 
@@ -548,8 +692,8 @@ def get_data2(path, args, seed=42):
             if args.low_ram:
                 matrix = read_csv_low_ram(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
             else:
-                matrix = read_csv(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features)
-            top_features = read_csv(csv_file=f"{path}/{args.features_file}", num_rows=-1, n_cols=args.n_features)
+                matrix = read_csv(csv_file=f"{path}/{args.csv_file}", num_rows=-1, n_cols=args.n_features, fp=args.fp)
+            top_features = read_csv(csv_file=f"{path}/{args.features_file}", num_rows=-1, n_cols=args.n_features, fp=args.fp)
             names = matrix.iloc[:, 0]
             labels = matrix.iloc[:, 1]
             print(len(names))

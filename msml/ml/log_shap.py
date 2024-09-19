@@ -201,7 +201,13 @@ def make_images_shap(bins, shap_values, label, run, log_path):
     min_parent_mz = np.unique(np.array([float(x.split('_')[0]) for x in list(shap_values.index)]))
     max_min_parent_mz = np.max(min_parent_mz)
     min_min_parent_mz = np.min(min_parent_mz)
-    interval = min_parent_mz[1] - min_parent_mz[0]
+    if len(min_parent_mz) == 1:
+        interval = 0
+        min_parents_arr = min_parent_mz
+    else:
+        interval = min_parent_mz[1] - min_parent_mz[0]
+        min_parents_arr = np.arange(int(min_min_parent_mz), int(max_min_parent_mz) + interval, interval)
+
     final = {min_parent: pd.DataFrame(
         np.zeros([int(np.ceil(bins['mz_max'] / bins['mz_bin'])) + 1,
                     int(np.ceil(bins['rt_max'] / bins['rt_bin'])) + 1]),
@@ -210,8 +216,7 @@ def make_images_shap(bins, shap_values, label, run, log_path):
             bins['rt_rounding']),
         index=np.arange(0, bins['mz_max'] + bins['mz_bin'], bins['mz_bin']).round(
             bins['mz_rounding'])
-    ) for min_parent in
-                np.arange(int(min_min_parent_mz), int(max_min_parent_mz) + interval, interval)}
+    ) for min_parent in min_parents_arr}
     for i in list(final.keys()):
         final[i].index = np.round(final[i].index, bins['mz_rounding'])
         final[i].columns = np.round(final[i].columns, bins['rt_rounding'])
@@ -255,8 +260,8 @@ def save_images_and_csv3d(path, final, label, min_parent):
     del im
 
 
-def log_explainer(model, x_df, labels, group, run, bins, log_path):
-    unique_labels = np.unique(labels)
+def log_explainer(model, x_df, labels, group, run, bins, log_path, unique_labels):
+    unique_classes = np.unique(labels)
     # The explainer doesn't like tensors, hence the f function
     f = lambda x: model.predict(x)
     try:
@@ -273,7 +278,7 @@ def log_explainer(model, x_df, labels, group, run, bins, log_path):
 
     # Get the shap values from my test data
     shap_values = explainer(x_df)
-    if len(unique_labels) == 2:
+    if len(unique_classes) == 2:
         shap_values_df = pd.DataFrame(
             np.c_[shap_values.base_values, shap_values.values], 
             columns=['bv'] + list(x_df.columns)
@@ -328,7 +333,8 @@ def log_explainer(model, x_df, labels, group, run, bins, log_path):
     else:
         # save shap_values
         # TODO Verifier que l'ordre est bon
-        for i, label in enumerate(unique_labels):
+        for i, label in enumerate(unique_classes):
+            label = unique_classes[label]
             shap_values_df = pd.DataFrame(
                 np.c_[shap_values.base_values[:, i], shap_values.values[:, :, i]], 
                 columns=['bv'] + list(x_df.columns)
@@ -402,7 +408,7 @@ def log_explainer(model, x_df, labels, group, run, bins, log_path):
 
 def log_kernel_explainer(model, x_df, misclassified, 
                          labels, group, run, cats, log_path):
-    unique_labels = np.unique(labels)
+    unique_classes = np.unique(labels)
 
     # Convert my pandas dataframe to numpy
     data = x_df.to_numpy(dtype=np.float32)
@@ -415,7 +421,7 @@ def log_kernel_explainer(model, x_df, misclassified,
     shap_values = explainer.shap_values(df)
     # shap_interaction = explainer.shap_interaction_values(X_test)
     shap_values_df = pd.DataFrame(np.concatenate(shap_values), columns=x_df.columns)
-    for i, label in enumerate(unique_labels):
+    for i, label in enumerate(unique_classes):
         if i == len(shap_values):
             break
         shap_values_df.iloc[i].to_csv(f"{log_path}/{group}_kernel_shap_{label}.csv")
@@ -431,7 +437,7 @@ def log_kernel_explainer(model, x_df, misclassified,
     make_group_difference_plot(x_df.sum(1).to_numpy(), mask, group, run, 'Kernel')
 
 
-def log_shap(run, ae, best_lists, cols, bins, log_path):
+def log_shap(run, ae, best_lists, cols, bins, log_path, unique_labels):
     # explain all the predictions in the test set
     # explainer = shap.KernelExplainer(svc_linear.predict_proba, X_train[:100])
     os.makedirs(log_path, exist_ok=True)
@@ -452,7 +458,7 @@ def log_shap(run, ae, best_lists, cols, bins, log_path):
         # TODO Problem with not enough memory...
         try:
             log_explainer(ae, X_test_df, best_lists[group]['labels'],
-                    group, run, bins, log_path)
+                    group, run, bins, log_path, unique_labels)
         except:
             pass
         # log_kernel_explainer(ae, X_test_df, misclassified,
