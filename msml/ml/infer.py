@@ -319,19 +319,25 @@ class Infer:
             'threshold': 0,
             'inference': False,
         }
-        columns_stats_over0(all_data['inputs']['all'], infos, True)
-        columns_stats_0(all_data['inputs']['all'], infos, True)
+        columns_stats_over0(all_data['inputs']['all'],
+                            infos,
+                            {'mz': self.args.mz, 'rt': self.args.rt},
+                            True)
+
+        columns_stats_0(all_data['inputs']['all'],
+                        infos,
+                        {'mz': self.args.mz, 'rt': self.args.rt},
+                        True)
 
         # import array of columns from columns_after_threshold.pkl
-        with open(f'{self.args.exp_name}/columns_after_threshold_{self.args.scaler_name}.pkl', 'rb') as f:
-            columns = pickle.load(f)
+        # with open(f'{self.args.exp_name}/columns_after_threshold_{self.args.scaler_name}.pkl', 'rb') as f:
+        #     columns = pickle.load(f)
 
-        all_data['inputs']['all'] = all_data['inputs']['all'].loc[:, columns]
-        all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'][columns]
-        all_data['inputs']['test'] = all_data['inputs']['test'][columns]
+        # all_data['inputs']['all'] = all_data['inputs']['all'].loc[:, columns]
+        # all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'][columns]
+        # all_data['inputs']['test'] = all_data['inputs']['test'][columns]
 
-        all_data, scaler = scale_data(scaler_name, all_data)
-
+        # all_data, scaler = scale_data(scaler_name, all_data)
 
         if self.log_neptune:
             # Create a Neptune run object
@@ -404,16 +410,32 @@ class Infer:
         try:
             times = []
             # use progress_bar
-            with tqdm(total=len(test_data)) as pbar:
-                for data in range(len(test_data)):
-                    start = time.time()
-                    lists['proba']['test'] += [[self.model[i].predict_proba(test_data.iloc[data].values.reshape([1, -1])).flatten() for i in range(len(self.model))]]
-                    lists['proba']['test'][-1] = np.mean(np.stack(lists['proba']['test'][-1]), axis=0)
-                    lists['preds']['test'] += [np.argmax(lists['proba']['test'][-1], axis=0)]
-                    times.append(time.time() - start)
-                    pbar.update(1)
-            lists['proba']['test'] = np.stack(lists['proba']['test'])
-            lists['preds']['test'] = np.stack(lists['preds']['test'])
+            try:
+                lists['proba']['test'] = [self.model[i].predict_proba(test_data) for i in range(len(self.model))]
+                lists['preds']['test'] = [np.argmax(lists['proba']['test'][i], axis=1) for i in range(len(self.model))]
+            except:
+                if self.args.sparse_matrix:
+                    test_dmatrix = xgboost.DMatrix(
+                        test_data.astype(pd.SparseDtype("float", 0))
+                    )
+                else:
+                    test_dmatrix = xgboost.DMatrix(test_data)
+                lists['proba']['test'] = [self.model[i].predict(test_dmatrix) for i in range(len(self.model))]
+                lists['preds']['test'] = [np.argmax(lists['proba']['test'][i], axis=1) for i in range(len(self.model))]
+
+            # with tqdm(total=len(test_data)) as pbar:
+            #     for data in range(len(test_data)):
+            #         start = time.time()
+            #         try:
+            #             lists['proba']['test'] += [[self.model[i].predict_proba(test_data.iloc[data].values.reshape([1, -1])).flatten() for i in range(len(self.model))]]
+            #         except:
+            #             lists['proba']['test'] += [[self.model[i].predict(test_dmatrix) for i in range(len(self.model))]]
+            #         lists['proba']['test'][-1] = np.mean(np.stack(lists['proba']['test'][-1]), axis=0)
+            #         lists['preds']['test'] += [np.argmax(lists['proba']['test'][-1], axis=0)]
+            #         times.append(time.time() - start)
+            #         pbar.update(1)
+            lists['proba']['test'] = np.mean(np.stack(lists['proba']['test']), axis=0)
+            lists['preds']['test'] = stats.mode(np.stack(lists['preds']['test']))[0].flatten()
             # for data in test_data:
             #     start = time.time()
             #     lists['proba']['test'] += [np.mean([self.model[i].predict_proba(test_data) for i in range(len(self.model))] , axis=0)]
@@ -437,7 +459,13 @@ class Infer:
             # lists['preds']['test'] = np.argmax(lists['proba']['test'], axis=1)
 
         except:
-            lists['preds']['test'] = [self.model[i].predict(test_data.values) for i in range(len(self.model))]
+            try:
+                lists['proba']['test'] += [[self.model[i].predict_proba(test_data.iloc[data].values.reshape([1, -1])).flatten() for i in range(len(self.model))]]
+            except:
+                test_dmatrix = xgboost.DMatrix(
+                    test_data.astype(pd.SparseDtype("float", 0))
+                )
+                lists['proba']['test'] += [[self.model[i].predict(test_dmatrix) for i in range(len(self.model))]]
             # take the mode of the predictions
             lists['preds']['test'] = stats.mode(np.stack(lists['preds']['test']), axis=0)[0].flatten()
 
@@ -460,27 +488,27 @@ class Infer:
                 lists['mcc']['posurines'] = MCC(lists['classes']['posurines'][-1], lists['preds']['posurines'][-1])
                 lists['acc']['posurines'] = ACC(lists['classes']['posurines'][-1], lists['preds']['posurines'][-1])
             
-        try:
-            data_list = {
-                'test': {
-                    'inputs': test_data,
-                    'labels': lists['classes']['test'],
-                    'preds': lists['preds']['test'],
-                    'proba': lists['proba']['test'],
-                    'batches': all_data['batches']['all'],
-                    'names': all_data['names']['test']
-                },
-            }
-        except:
-            data_list = {
-                'test': {
-                    'inputs': test_data,
-                    'labels': lists['classes']['test'],
-                    'preds': lists['preds']['test'],
-                    'batches': all_data['batches']['all'],
-                    'names': all_data['names']['test']
-                },
-            }
+        # try:
+        #     data_list = {
+        #         'test': {
+        #             'inputs': test_data,
+        #             'labels': lists['classes']['test'],
+        #             'preds': lists['preds']['test'],
+        #             'proba': lists['proba']['test'],
+        #             'batches': all_data['batches']['all'],
+        #             'names': all_data['names']['test']
+        #         },
+        #     }
+        # except:
+        #     data_list = {
+        #         'test': {
+        #             'inputs': test_data,
+        #             'labels': lists['classes']['test'],
+        #             'preds': lists['preds']['test'],
+        #             'batches': all_data['batches']['all'],
+        #             'names': all_data['names']['test']
+        #         },
+        #     }
         lists['mcc']['test'] = MCC(lists['classes']['test'], lists['preds']['test'])
         lists['acc']['test'] = ACC(lists['classes']['test'], lists['preds']['test'])
         

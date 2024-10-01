@@ -360,7 +360,7 @@ def columns_stats_over0(df, name, bins, inference=False):
                 f"stats_over0_inference{inference}.png")
 
 
-def columns_stats_0(df, name, inference=False):
+def columns_stats_0(df, name, bins, inference=False):
     """
     This column takes a pandas DataFrame and returns the number of non-zero columns
     per binning type
@@ -412,8 +412,8 @@ def columns_stats_0(df, name, inference=False):
         a.set_xticklabels(a.get_xticklabels(), rotation=45)
     # For RT, only display every 10th value
     rt_keys = list(rt_counts.keys())
-    ax[1].set_xticks([i for i in range(len(rt_keys)) if i % 10 == 0])
-    ax[1].set_xticklabels([rt_keys[i] for i in range(len(rt_keys)) if i % 10 == 0], rotation=45)
+    ax[1].set_xticks([i for i in range(len(rt_keys)) if i % bins['mz'] == 0])
+    ax[1].set_xticklabels([rt_keys[i] for i in range(len(rt_keys)) if i % bins['mz'] == 0], rotation=45)
 
     plt.tight_layout()    
     os.makedirs(f"columns/{name['scaler']}/mz{name['mz']}/rt{name['rt']}/" \
