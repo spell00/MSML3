@@ -8,7 +8,6 @@ NEPTUNE_MODEL_NAME = 'MSMLBAC-'
 import numpy as np
 import random
 import sklearn.neighbors
-# import torch
 import sklearn
 import os
 
@@ -57,7 +56,7 @@ if __name__ == '__main__':
     parser.add_argument('--shift', type=int, default=0)  # TODO keep this?
     parser.add_argument('--log', type=str, default='inloop')
     parser.add_argument('--features_selection', type=str, default='none')
-    parser.add_argument('--concs', type=str, default='na,h')
+    parser.add_argument('--concs', type=str, default='na,h,l')
     parser.add_argument('--n_repeats', type=int, default=5)
     parser.add_argument("--min_mz", type=int, default=0)
     parser.add_argument("--max_mz", type=int, default=10000)
