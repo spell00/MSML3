@@ -57,6 +57,7 @@ class MakeTensorsMultiprocess:
         """
 
         # Starts a csv file to record the time it takes to process each file
+        os.makedirs(f'{path}/{args.exp_name}', exist_ok=True)
         with open(f'{path}/{args.exp_name}/time.csv', 'w', newline='', encoding='utf-8') as f:
             csv_writer = csv.writer(f)
             csv_writer.writerow(['File', 'Time', 'input_size(MB)', 'output_size(MB)'])
@@ -115,7 +116,7 @@ class MakeTensorsMultiprocess:
         # Find all intervals between min_parents. Then get mode interval
         intervals = np.diff(min_parents_mz)
         if len(np.unique(intervals)) > 1:
-            print(f"MUTLIPLE Intervals between min_parents: {np.unique(intervals)}")
+            print(f"MULTIPLE Intervals between min_parents: {np.unique(intervals)}")
         # Remove from intervals values that are not at an interval distance of the next value
         intervals = [x for x in intervals if x + interval in intervals or x - interval in intervals]
         interval = np.round(stats.mode(intervals)[0], 2)
