@@ -983,17 +983,17 @@ def make_total_graph_total_batch(valid_metrics, test_metrics, metric, title, pat
 def make_total_graph_total_bact(valid_metrics, test_metrics, metric, title, path, run, bacteria_cols):
     # Prepare data for plotting
     metric_df = pd.DataFrame({
-        'Bacteria': bacteria_cols,
+        'Pathogens': bacteria_cols,
         'Valid': [valid_metrics[b] for b in bacteria_cols],
         'Test': [test_metrics[b] for b in bacteria_cols]
     })
 
-    metric_melted_df = metric_df.melt(id_vars='Bacteria', var_name='Group', value_name=metric)
-    metric_melted_df['Bacteria'] = 'Bacteria'
+    metric_melted_df = metric_df.melt(id_vars='Pathogens', var_name='Group', value_name=metric)
+    metric_melted_df['Pathogens'] = 'Pathogens'
 
     # Plot metric by bacterium
     plt.figure(figsize=(14, 8))
-    sns.boxplot(x='Bacteria', y=metric, hue='Group', data=metric_melted_df)
+    sns.boxplot(x='Pathogens', y=metric, hue='Group', data=metric_melted_df)
     plt.xticks(rotation=90)
     plt.title(title)
     # Remove x axis label
@@ -1003,7 +1003,7 @@ def make_total_graph_total_bact(valid_metrics, test_metrics, metric, title, path
     plt.tight_layout()
     plt.savefig(path)
     plt.close()
-    run[f'Bacteria/{metric}'].upload(path)
+    run[f'Pathogens/{metric}'].upload(path)
 
 def plot_bars(args, run, bacteria_cols):
     # Load the datasets
