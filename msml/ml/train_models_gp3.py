@@ -8,7 +8,6 @@ NEPTUNE_MODEL_NAME = 'MSMLBAC-'
 import numpy as np
 import random
 import sklearn.neighbors
-# import torch
 import sklearn
 import os
 
@@ -29,7 +28,6 @@ from skopt import gp_minimize
 import matplotlib.pyplot as plt
 from dataset import get_data_all
 from train import Train
-import cupy
 
 if __name__ == '__main__':
     # Load data
@@ -58,7 +56,7 @@ if __name__ == '__main__':
     parser.add_argument('--shift', type=int, default=0)  # TODO keep this?
     parser.add_argument('--log', type=str, default='inloop')
     parser.add_argument('--features_selection', type=str, default='none')
-    parser.add_argument('--concs', type=str, default='na,h')
+    parser.add_argument('--concs', type=str, default='na,h,l')
     parser.add_argument('--n_repeats', type=int, default=5)
     parser.add_argument("--min_mz", type=int, default=0)
     parser.add_argument("--max_mz", type=int, default=10000)
@@ -101,7 +99,7 @@ if __name__ == '__main__':
     }
 
     batch_dates = [
-        # "B15-06-29-2024",
+        "B15-06-29-2024",
         "B14-06-10-2024", "B13-06-05-2024", "B12-05-31-2024", "B11-05-24-2024",
         "B10-05-03-2024", "B9-04-22-2024", "B8-04-15-2024",
         'B7-04-03-2024', 'B6-03-29-2024', 'B5-03-13-2024',
@@ -109,7 +107,7 @@ if __name__ == '__main__':
         'B1-02-02-2024'
     ]
     batches_to_keep = [
-        # "b15-06-29-2024",
+        "b15-06-29-2024",
         "b14-06-10-2024", "b13-06-05-2024", "b12-05-31-2024", "b11-05-24-2024",
         "b10-05-03-2024", "b9-04-22-2024", "b8-04-15-2024", 
         'b7-04-03-2024', 'b6-03-29-2024', 'b5-03-13-2024', 

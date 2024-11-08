@@ -43,11 +43,12 @@ def read_csv(csv_file, num_rows=1000, n_cols=1000, fp="float64"):
                 if row_num >= num_rows:
                     break
 
-            if fp == 'float32':
-                data_num[row_num-1] = row[3:].astype(np.float32)
-            elif fp == 'float16':
+            # Replace '' by 0 in row
+            row = np.array([0 if x == '' else x for x in row])
+            if fp == 'float16':
                 data_num[row_num-1] = row[3:].astype(np.float16)
-            data_num[row_num-1] = row[3:].astype(np.float16)
+            else:
+                data_num[row_num-1] = row[3:].astype(np.float32)
             data_str[row_num-1] = row[:3]
             progress_bar.update(1)
             del row

@@ -90,167 +90,178 @@ class MakeTensorsMultiprocess:
         :param i:
         :return:
         """
-        startTime = time.time()
-        # print(len(gc.get_objects()))
         try:
-            file, label = self.tsv_list[index], self.labels_list[index]
-        except:
-            exit('Error with tsv index')
-        try:
-            tsv = pd.read_csv(file, header=0, sep='\t')
-            tsv = tsv.astype({c: np.float32 for c in tsv.select_dtypes(include='float64').columns})
-            tsv_size = tsv.memory_usage().sum() / 2 ** 20
-        except:
-            exit('Error reading csv')
-        print(
-            f"Processing file {index}: {file} min_parents: min={tsv.min_parent_mz.min()} max={tsv.min_parent_mz.max()}")
+            startTime = time.time()
+            # print(len(gc.get_objects()))
+            try:
+                file, label = self.tsv_list[index], self.labels_list[index]
+            except:
+                exit('Error with tsv index')
+            try:
+                tsv = pd.read_csv(file, header=0, sep='\t')
+                tsv = tsv.astype({c: np.float32 for c in tsv.select_dtypes(include='float64').columns})
+                tsv_size = tsv.memory_usage().sum() / 2 ** 20
+            except:
+                exit('Error reading csv')
+            print(
+                f"Processing file {index}: {file} min_parents: min={tsv.min_parent_mz.min()} max={tsv.min_parent_mz.max()}")
 
-        # if label != 'aba_01-03-2024_240222_u002_l':
-        #     return None, None, None
-        tsv = tsv[tsv.bin_intensity != 0]
+            # if label != 'aba_01-03-2024_240222_u002_l':
+            #     return None, None, None
+            tsv = tsv[tsv.bin_intensity != 0]
 
-        tsv = tsv.drop(['max_parent_mz'], axis=1)
-        # tsv['mz_bin'] = tsv['mz_bin'].round(2)
+            tsv = tsv.drop(['max_parent_mz'], axis=1)
+            # tsv['mz_bin'] = tsv['mz_bin'].round(2)
 
-        min_parents_mz = np.unique(tsv.min_parent_mz)
-        # Find all intervals between min_parents. Then get mode interval
-        intervals = np.diff(min_parents_mz)
-        if len(np.unique(intervals)) > 1:
-            print(f"MULTIPLE Intervals between min_parents: {np.unique(intervals)}")
-        # Remove from intervals values that are not at an interval distance of the next value
-        intervals = [x for x in intervals if x + interval in intervals or x - interval in intervals]
-        interval = np.round(stats.mode(intervals)[0], 2)
-        if self.bins['mz_shift']:
-            mz_shift = self.bins['mz_bin_post'] / 2
-        else:
-            mz_shift = 0
-        if self.bins['rt_shift']:
-            rt_shift = self.bins['rt_bin_post'] / 2
-        else:
-            rt_shift = 0
-
-        if self.is_sparse:
-            if self.log2 == 'inloop':
-                dtype = pd.SparseDtype("float32", 0)
+            min_parents_mz = np.unique(tsv.min_parent_mz)
+            # Find all intervals between min_parents. Then get mode interval
+            intervals = np.diff(min_parents_mz)
+            if len(np.unique(intervals)) > 1:
+                print(f"MUTLIPLE Intervals between min_parents: {np.unique(intervals)}")
+            interval = np.round(stats.mode(intervals)[0], 2)
+            # Remove from intervals values that are not at an interval distance of the next value
+            min_parents_mz = np.array([x for x in min_parents_mz if x + interval in min_parents_mz or x - interval in min_parents_mz])
+            if self.bins['mz_shift']:
+                mz_shift = self.bins['mz_bin_post'] / 2
             else:
-                dtype = pd.SparseDtype("float64", 0)
-        else:
-            if self.log2 == 'inloop':
-                dtype = "float32"
+                mz_shift = 0
+            if self.bins['rt_shift']:
+                rt_shift = self.bins['rt_bin_post'] / 2
             else:
-                dtype = "float64"
+                rt_shift = 0
 
-        try:
-            final = {min_parent: pd.DataFrame(
-                np.zeros([int(np.ceil(tsv.mz_bin.max() / self.bins['mz_bin_post'])) + 1,
-                        int(np.ceil(tsv.rt_bin.max() / self.bins['rt_bin_post'])) + 1]),
-                dtype=np.float32,
-                columns=np.arange(0, tsv.rt_bin.max() + self.bins['rt_bin_post'], self.bins['rt_bin_post']).round(
-                    self.bins['rt_rounding']) - rt_shift,
-                index=np.arange(0, tsv.mz_bin.max() + self.bins['mz_bin_post'], self.bins['mz_bin_post']).round(
-                    self.bins['mz_rounding']) - mz_shift
-            ) for min_parent in
-                    np.arange(int(tsv.min_parent_mz.min()), int(tsv.min_parent_mz.max()) + interval, interval)}
-        except:
-            exit('Error creating final dataframe')
-        for i in list(final.keys()):
-            final[i].index = np.round(final[i].index, self.bins['mz_rounding'])
-            final[i].columns = np.round(final[i].columns, self.bins['rt_rounding'])
-        min_parent = list(final.keys())[0]
-        rt = float(final[min_parent][list(final[min_parent].keys())[0]][0])
-        # spdtypes = final[min_parent].dtypes[rt]
-        # prev_mz = -1
-        try:
-            for i, line in enumerate(tsv.values):
-                min_parent, rt, mz, intensity = line
-                if np.isnan(rt) or np.isnan(mz) or np.isnan(min_parent):
-                    continue
-                if self.bins['rt_shift']:
-                    tmp_rt = np.floor(np.round(rt / self.bins['rt_bin_post'], 8)) * self.bins['rt_bin_post']
-                    if rt % (self.bins['rt_bin_post'] / 2) > (self.bins['rt_bin_post'] / 2):
-                        tmp_rt += self.bins['rt_bin_post'] / 2
-                    else:
-                        tmp_rt -= self.bins['rt_bin_post'] / 2
-                    rt = tmp_rt
-                elif self.bins['rt_bin_post'] != self.bins['rt_bin']:
-                    rt = np.round(np.round(rt / self.bins['rt_bin_post'], 8), self.bins['rt_bin_post']) * self.bins['rt_bin_post']
-
-                if self.bins['mz_shift']:
-                    tmp_mz = np.floor(np.round(mz / self.bins['mz_bin_post'], 8)) * self.bins['mz_bin_post']
-                    if mz % (self.bins['mz_bin_post'] / 2) > (self.bins['mz_bin_post'] / 2):
-                        tmp_mz += self.bins['mz_bin_post'] / 2
-                    else:
-                        tmp_mz -= self.bins['mz_bin_post'] / 2
-                    mz = tmp_mz
-                elif self.bins['mz_bin_post'] != self.bins['mz_bin']:
-                    mz = np.round(np.round(mz / self.bins['mz_bin_post'], 8), self.bins['mz_bin_post']) * self.bins['mz_bin_post']
-                if self.bins['rt_rounding'] != 0:
-                    rt = np.round(rt, self.bins['rt_rounding'])
-                if self.bins['mz_rounding'] != 0:
-                    mz = np.round(mz, self.bins['mz_rounding'])
-                # final[min_parent][mz][rt] += np.log1p(intensity)
-                mz = np.round(float(mz), self.bins['mz_rounding'])
-                rt = np.round(float(rt), self.bins['rt_rounding'])
-                # if self.is_sparse and prev_mz != rt:
-                    # Change todense on mz rather than rt
-                    # if prev_mz != -1:
-                    #     final[min_parent] = final[min_parent].astype(spdtypes)
-                    # final[min_parent] = final[min_parent].sparse.to_dense()
+            if self.is_sparse:
                 if self.log2 == 'inloop':
-                    final[min_parent].loc[mz].loc[rt] += np.log1p(intensity)
+                    dtype = pd.SparseDtype("float32", 0)
                 else:
-                    final[min_parent].loc[mz].loc[rt] += intensity
-                # if self.is_sparse:
-                #     final[min_parent][rt] = final[min_parent][rt].astype(spdtypes)
-                # del min_parent, rt, mz, intensity, line
-                # prev_mz = mz
-                if self.test_run and i > 10000:
-                    break
-        except:
-            exit('Error filling final dataframe')
-        for min_parent in final:
-            final[min_parent] = final[min_parent].astype(dtype)
-        if self.lowess:
-            for df in final:
-                for ii, line1 in enumerate(final[df].values):
-                    final[df].iloc[ii] = lowess(line1, list(final[df].columns), frac=0.1, return_sorted=False)
-        if self.find_peaks:
-            for df in final:
-                for ii, line1 in enumerate(final[df].values):
-                    mask = find_peaks(final[df].iloc[ii], height=0.1, distance=2)
-                    # Make all values 0 except the ones that are in mask
-                    final[df].iloc[ii] = pd.Series([final[df].iloc[ii].values[i] if i in mask[0] else 0 for i in range(len(final[df].iloc[ii]))])
-        # os.makedirs(f"{self.path}/nibabel/", exist_ok=True)
-        if self.save:
-            # img = nib.Nifti1Image(np.stack(list(final.values())), np.eye(4))
-            # img.uncache()
-            # nib.save(img, f'{self.path}/nibabel/{label}.nii')
-            df = np.stack(list(final.values()))
-            # df = df / df.max(axis=(1, 2), keepdims=True)
-            df = df / df.max()
-            _ = [self.save_images_and_csv3d(matrix, df[i], f"{label}", min_parent) for i, (min_parent, matrix) in
-                 enumerate(zip(final, list(final.values())))]
-            
-            df = df.sum(0)
-            df = df / df.max()
-            _ = self.save_images_and_csv(reduce(lambda x, y: x.astype(float).add(y.astype(float)), final.values()), df, label)
-            # del img
-        # df = np.stack(list(final.values()))
-        # for x in list(final.keys()):
-        #     final[x] = csc_matrix(final[x])
-        total_memory = np.sum([final[x].memory_usage().sum() for x in list(final.keys())]) / 2 ** 20
-        total_time = (time.time() - startTime)
-        # Round to 2 decimals
-        total_memory = np.round(total_memory, 2)
-        total_time = np.round(total_time, 2)
-        tsv_size = np.round(tsv_size, 2)
-        print(
-            f"Finished file {index}. Total memory: {total_memory}  MB, time: {total_time} seconds"
-        )
-        csv_file = f'{self.path}/{self.args.exp_name}/time.csv'
-        with open(csv_file, 'a', newline='', encoding='utf-8') as f:
-            csv_writer = csv.writer(f)
-            csv_writer.writerow([label, total_time, tsv_size, total_memory])
+                    dtype = pd.SparseDtype("float64", 0)
+            else:
+                if self.log2 == 'inloop':
+                    dtype = "float32"
+                else:
+                    dtype = "float64"
+
+            try:
+                final = {min_parent: pd.DataFrame(
+                    np.zeros([int(np.ceil(tsv.mz_bin.max() / self.bins['mz_bin_post'])) + 1,
+                            int(np.ceil(tsv.rt_bin.max() / self.bins['rt_bin_post'])) + 1]),
+                    dtype=np.float32,
+                    columns=np.arange(0, tsv.rt_bin.max() + self.bins['rt_bin_post'], self.bins['rt_bin_post']).round(
+                        self.bins['rt_rounding']) - rt_shift,
+                    index=np.arange(0, tsv.mz_bin.max() + self.bins['mz_bin_post'], self.bins['mz_bin_post']).round(
+                        self.bins['mz_rounding']) - mz_shift
+                ) for min_parent in
+                        np.arange(int(min_parents_mz.min()), int(min_parents_mz.max()) + interval, interval)}
+            except:
+                exit('Error creating final dataframe')
+            for i in list(final.keys()):
+                final[i].index = np.round(final[i].index, self.bins['mz_rounding'])
+                final[i].columns = np.round(final[i].columns, self.bins['rt_rounding'])
+            min_parent = list(final.keys())[0]
+            rt = float(final[min_parent][list(final[min_parent].keys())[0]][0])
+            # spdtypes = final[min_parent].dtypes[rt]
+            # prev_mz = -1
+            try:
+                missed = 0
+                for i, line in enumerate(tsv.values):
+                    min_parent, rt, mz, intensity = line
+                    if np.isnan(rt) or np.isnan(mz) or np.isnan(min_parent):
+                        continue
+                    if self.bins['rt_shift']:
+                        tmp_rt = np.floor(np.round(rt / self.bins['rt_bin_post'], 8)) * self.bins['rt_bin_post']
+                        if rt % (self.bins['rt_bin_post'] / 2) > (self.bins['rt_bin_post'] / 2):
+                            tmp_rt += self.bins['rt_bin_post'] / 2
+                        else:
+                            tmp_rt -= self.bins['rt_bin_post'] / 2
+                        rt = tmp_rt
+                    elif self.bins['rt_bin_post'] != self.bins['rt_bin']:
+                        rt = np.round(np.round(rt / self.bins['rt_bin_post'], 8), self.bins['rt_bin_post']) * self.bins['rt_bin_post']
+
+                    if self.bins['mz_shift']:
+                        tmp_mz = np.floor(np.round(mz / self.bins['mz_bin_post'], 8)) * self.bins['mz_bin_post']
+                        if mz % (self.bins['mz_bin_post'] / 2) > (self.bins['mz_bin_post'] / 2):
+                            tmp_mz += self.bins['mz_bin_post'] / 2
+                        else:
+                            tmp_mz -= self.bins['mz_bin_post'] / 2
+                        mz = tmp_mz
+                    elif self.bins['mz_bin_post'] != self.bins['mz_bin']:
+                        mz = np.round(np.round(mz / self.bins['mz_bin_post'], 8), self.bins['mz_bin_post']) * self.bins['mz_bin_post']
+                    if self.bins['rt_rounding'] != 0:
+                        rt = np.round(rt, self.bins['rt_rounding'])
+                    if self.bins['mz_rounding'] != 0:
+                        mz = np.round(mz, self.bins['mz_rounding'])
+                    # final[min_parent][mz][rt] += np.log1p(intensity)
+                    mz = np.round(float(mz), self.bins['mz_rounding'])
+                    rt = np.round(float(rt), self.bins['rt_rounding'])
+                    # if self.is_sparse and prev_mz != rt:
+                        # Change todense on mz rather than rt
+                        # if prev_mz != -1:
+                        #     final[min_parent] = final[min_parent].astype(spdtypes)
+                        # final[min_parent] = final[min_parent].sparse.to_dense()
+                    try:
+                        if self.log2 == 'inloop':
+                            final[min_parent].loc[mz].loc[rt] += np.log1p(intensity)
+                        else:
+                            final[min_parent].loc[mz].loc[rt] += intensity
+                    except:
+                        missed += 1
+                    # if self.is_sparse:
+                    #     final[min_parent][rt] = final[min_parent][rt].astype(spdtypes)
+                    # del min_parent, rt, mz, intensity, line
+                    # prev_mz = mz
+                    if self.test_run and i > 10000:
+                        break
+            except:
+                exit('Error filling final dataframe')
+            if missed > 0:
+                print(f"Missed {missed} values in file {index}")
+            for min_parent in final:
+                final[min_parent] = final[min_parent].astype(dtype)
+            if self.lowess:
+                for df in final:
+                    for ii, line1 in enumerate(final[df].values):
+                        final[df].iloc[ii] = lowess(line1, list(final[df].columns), frac=0.1, return_sorted=False)
+            if self.find_peaks:
+                for df in final:
+                    for ii, line1 in enumerate(final[df].values):
+                        mask = find_peaks(final[df].iloc[ii], height=0.1, distance=2)
+                        # Make all values 0 except the ones that are in mask
+                        final[df].iloc[ii] = pd.Series([final[df].iloc[ii].values[i] if i in mask[0] else 0 for i in range(len(final[df].iloc[ii]))])
+            # os.makedirs(f"{self.path}/nibabel/", exist_ok=True)
+            if self.save:
+                # img = nib.Nifti1Image(np.stack(list(final.values())), np.eye(4))
+                # img.uncache()
+                # nib.save(img, f'{self.path}/nibabel/{label}.nii')
+                df = np.stack(list(final.values()))
+                # df = df / df.max(axis=(1, 2), keepdims=True)
+                df = df / df.max()
+                _ = [self.save_images_and_csv3d(matrix, df[i], f"{label}", min_parent) for i, (min_parent, matrix) in
+                    enumerate(zip(final, list(final.values())))]
+                
+                df = df.sum(0)
+                df = df / df.max()
+                _ = self.save_images_and_csv(reduce(lambda x, y: x.astype(float).add(y.astype(float)), final.values()), df, label)
+                # del img
+            # df = np.stack(list(final.values()))
+            # for x in list(final.keys()):
+            #     final[x] = csc_matrix(final[x])
+            total_memory = np.sum([final[x].memory_usage().sum() for x in list(final.keys())]) / 2 ** 20
+            total_time = (time.time() - startTime)
+            # Round to 2 decimals
+            total_memory = np.round(total_memory, 2)
+            total_time = np.round(total_time, 2)
+            tsv_size = np.round(tsv_size, 2)
+            print(
+                f"Finished file {index}. Total memory: {total_memory}  MB, time: {total_time} seconds"
+            )
+            csv_file = f'{self.path}/{self.args.exp_name}/time.csv'
+            with open(csv_file, 'a', newline='', encoding='utf-8') as f:
+                csv_writer = csv.writer(f)
+                csv_writer.writerow([label, total_time, tsv_size, total_memory])
+        except Exception as e:
+            print(f"Error with file {index}: {file}")
+            print(e)
+            return None, None, None
         return final, list(final.keys()), label
 
     def n_samples(self):
@@ -340,13 +351,18 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
     with tqdm(total=len(data_matrix), position=0, leave=True) as pbar:
         while len(data_matrix) > 0:
             matrix, label = data_matrix[0][0], labels[0]
-            if n_min_mz_parent - len(matrix) > 0:
+            if n_min_mz_parent - len(matrix) < 0:
                 logging.warning(
                     f'mz{args_dict.mz_bin} rt{args_dict.rt_bin} mzp{args_dict.mz_bin_post} rtp{args_dict.rt_bin_post} : {label} had different number of min_mz_parent')
                 data_matrix = data_matrix[1:]
                 labels = labels[1:]
                 pbar.update(1)
                 continue
+            elif n_min_mz_parent - len(matrix) > 0:
+                # find the missing min_mz_parent
+                not_in_keys = [x for x in parents if x not in matrix.keys()]
+                for x in not_in_keys:
+                    matrix = {**matrix, x: csc_matrix(np.zeros((max_mz, max_rt)))}
 
             # https://stackoverflow.com/questions/6844998/is-there-an-efficient-way-of-concatenating-scipy-sparse-matrices
             # hstack of csc matrices should be faster than coo (worst) or csr

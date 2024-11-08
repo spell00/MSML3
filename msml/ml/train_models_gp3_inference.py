@@ -16,7 +16,7 @@ random.seed(42)
 np.random.seed(42)
 
 import matplotlib.pyplot as plt
-from dataset import get_data_infer
+from dataset import get_data_infer, get_data
 from infer import Infer
 import time
 import joblib
@@ -60,8 +60,14 @@ if __name__ == '__main__':
     parser.add_argument("--max_mz_parent", type=int, default=872)
     parser.add_argument("--low_ram", type=int, default=0)
     parser.add_argument("--n_splits", type=int, default=5)
-    parser.add_argument("--train_batches", type=str, default='b15-b14-b13-b12-b11-b10-b9-b8-b7-b6-b5-b4-b3-b2-b1')
+    parser.add_argument("--train_batches", type=str, default='b14-b13-b12-b11-b10-b9-b8-b7-b6-b5-b4-b3-b2-b1')
     parser.add_argument("--scaler_name", type=str, default='minmax2')
+    parser.add_argument("--fp", type=str, default=32)
+    # parser.add_argument("--colsample_bytree", type=float, default=1.0)
+    # parser.add_argument("--max_bin", type=int, default=256)
+    parser.add_argument("--sparse_matrix", type=int, default=1)
+    parser.add_argument("--remove_bad_samples", type=int, default=1)
+
     args = parser.parse_args()
 
     args.model_name = f"{args.model_name}"
@@ -110,7 +116,7 @@ if __name__ == '__main__':
         f'log{args.log}/{args.features_selection}/{exp}'
 
     data, unique_labels, unique_batches, unique_manips, \
-                        unique_urines, unique_concs = get_data_infer(path, args)
+                        unique_urines, unique_concs = get_data(path, args)
 
     uniques = {
         'labels': unique_labels,

@@ -3,6 +3,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+plt.rcParams.update({"font.size": 14})
+
 def analyze_directory(directory, file_type):
     # Collect file information
     if 'tsv' in file_type:
@@ -41,13 +43,13 @@ def analyze_directory(directory, file_type):
     plt.xlabel('File Size (MB)')
     plt.ylabel('Number of Files')
     os.makedirs(f"{directory}/summary/{file_type}", exist_ok=True)
-    plt.rc('font', size=16)
-    plt.rc('axes', titlesize=16)
-    plt.rc('axes', labelsize=16)
-    plt.rc('xtick', labelsize=16)
-    plt.rc('ytick', labelsize=16)
-    plt.rc('legend', fontsize=16)
-    plt.rc('figure', titlesize=16)
+    # plt.rc('font', size=16)
+    # plt.rc('axes', titlesize=16)
+    # plt.rc('axes', labelsize=16)
+    # plt.rc('xtick', labelsize=16)
+    # plt.rc('ytick', labelsize=16)
+    # plt.rc('legend', fontsize=16)
+    # plt.rc('figure', titlesize=16)
     
     plt.savefig(f"{directory}/summary/{file_type}/hist.png")
     # Increase all font sizes
@@ -61,13 +63,13 @@ def analyze_directory(directory, file_type):
     plt.title(f'Boxplot of File Sizes for {file_type}')
     plt.xlabel('File Size (MB)')
 
-    plt.rc('font', size=16)
-    plt.rc('axes', titlesize=16)
-    plt.rc('axes', labelsize=16)
-    plt.rc('xtick', labelsize=16)
-    plt.rc('ytick', labelsize=16)
-    plt.rc('legend', fontsize=16)
-    plt.rc('figure', titlesize=16)
+    # plt.rc('font', size=16)
+    # plt.rc('axes', titlesize=16)
+    # plt.rc('axes', labelsize=16)
+    # plt.rc('xtick', labelsize=16)
+    # plt.rc('ytick', labelsize=16)
+    # plt.rc('legend', fontsize=16)
+    # plt.rc('figure', titlesize=16)
     
     plt.savefig(f"{directory}/summary/{file_type}/boxplot.png")
     plt.close()
