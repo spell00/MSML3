@@ -45,8 +45,8 @@ The resulting mzdb files are stored in `../../resources/mzdb/$spd/$group/`
 
 On Linux (tested with WLS Ubuntu 20.04):
 
-`bash ./msml/preprocess/mzdb2tsv.sh $mz_bin $rt_bin $spd $group`
-
+`bash ./msml/preprocess/mzdb2tsv.sh spd pass_exist split_data resource
+bash mzdb2tsv.sh 200 FALSE 0 resources/bacteries_2024
 The resulting tsv files are stored in `../../resources/mzdb/$spd/$group/`
 
 ## Train deep learning model
