@@ -876,8 +876,8 @@ class Train:
         urinespositives_batches = np.array([x for x in all_data['batches']['urinespositives']])
         # TODO load expected classes elsewhere
         urinespositives_real_df = pd.concat((
-            pd.read_csv(f'resources/bacteries_2024/B10-05-03-2024/b10_patients_samples.csv'),
-            pd.read_csv(f'resources/bacteries_2024/B11-05-24-2024/b11_patients_samples.csv')
+            # pd.read_csv(f'resources/bacteries_2024/B10-05-03-2024/b10_patients_samples.csv'),
+            pd.read_csv(f'resources/bacteries_2024/BPatients-03-14-2025/patients_samples_20250318.csv')
         ))
 
         urinespositives_names = np.array([x for x in urinespositives_names if x in urinespositives_real_df.loc[:, 'ID'].to_numpy()])
