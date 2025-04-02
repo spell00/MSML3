@@ -592,11 +592,42 @@ def get_data_all(path, args, seed=42):
             data['cats'][group] = np.array(
                 [np.where(x == unique_labels)[0][0] for i, x in enumerate(data['labels'][group])])
 
-    for key in list(data['names'].keys()):
-        data['sets'][key] = np.array([key for _ in data['names'][key]])
-        unique_batches = np.unique(data['batches']['all'])
-        # for group in ['train', 'valid', 'test', 'train_pool', 'valid_pool', 'test_pool', 'all', 'all_pool']:
-        #     data['batches'][group] = np.array([np.argwhere(unique_batches == x)[0][0] for x in data['batches'][group]])
+        urinespositives_names = np.array([x.split('_')[-2] for x in data['names']['urinespositives']])
+        # TODO load expected classes elsewhere
+        urinespositives_real_df = pd.concat((
+            pd.read_csv(f'resources/bacteries_2024/B10-05-03-2024/b10_patients_samples.csv'),
+            pd.read_csv(f'resources/bacteries_2024/B11-05-24-2024/b11_patients_samples.csv')
+        ))
+        urinespositives_real_df.loc[:, 'Class'] = [l.lower() for l in urinespositives_real_df.loc[:, 'Class'].to_numpy()]
+        urinespositives_inds = np.array([i for i, x in enumerate(urinespositives_names) if x in urinespositives_real_df.loc[:, 'ID'].to_numpy()])
+        # Get the labels of urinespositives_real_df in the same order as the names
+        for k in data.keys():
+            if k == 'inputs':
+                data[k]['urinespositives'] = data[k]['urinespositives'].iloc[urinespositives_inds, :]
+            elif k in ['sets', 'cats']:
+                data[k]['urinespositives'] = []
+            else:
+                data[k]['urinespositives'] = data[k]['urinespositives'][urinespositives_inds]
+        data['labels']['urinespositives'] = np.array([
+            urinespositives_real_df.loc[urinespositives_real_df.loc[:, 'ID'] == x, 'Class'].to_numpy()[0] for x in urinespositives_names[urinespositives_inds]
+        ])
+        data['cats']['urinespositives'] = np.array([
+            np.where(x == unique_labels)[0][0] for i, x in enumerate(data['labels']['urinespositives'])
+        ])
+
+        if args.binary:
+            urinespositives_real_df.loc[:, 'Class'] = ['blanc' if l == 'blanc' else 'bact' for l in urinespositives_real_df.loc[:, 'Class'].to_numpy()]
+
+        # Keep only eco
+        inds_to_keep = np.where(data['labels']['urinespositives'] == 'eco')[0]
+        for k in data.keys():
+            if k == 'inputs':
+                data[k]['urinespositives'] = data[k]['urinespositives'].iloc[inds_to_keep, :]            
+            elif k == 'sets':
+                data[k]['urinespositives'] = []
+            else:
+                data[k]['urinespositives'] = data[k]['urinespositives'][inds_to_keep]
+
 
     return data, unique_labels, unique_batches, unique_manips, unique_urines, unique_concs
 

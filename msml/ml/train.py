@@ -863,8 +863,7 @@ class Train:
         urinespositives_batches = np.array([x for x in all_data['batches']['urinespositives']])
         # TODO load expected classes elsewhere
         urinespositives_real_df = pd.concat((
-            pd.read_csv(f'resources/bacteries_2024/B10-05-03-2024/b10_patients_samples.csv'),
-            pd.read_csv(f'resources/bacteries_2024/B11-05-24-2024/b11_patients_samples.csv')
+            pd.read_csv(f'resources/bacteries_2024/BPatients-03-14-2025/patients_samples_20250318.csv')
         ))
 
         urinespositives_names = np.array([x for x in urinespositives_names if x in urinespositives_real_df.loc[:, 'ID'].to_numpy()])
@@ -887,16 +886,6 @@ class Train:
         blanc_ids = [
             np.array([i for i, x in enumerate(lists['labels']['valid'][j]) if x == 'blanc']) for j in range(len(lists['labels']['valid']))
         ]
-        # lists['names']['posurines'] = [
-        #     [lists['names']['posurines'][j][i] for i in to_keep] + [lists['names']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['names']['posurines']))
-        # ]
-        # lists['batches']['posurines'] = [
-        #     [lists['batches']['posurines'][j][i] for i in to_keep] + [lists['batches']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['batches']['posurines']))
-        # ]
-        # Get the labels of urinespositives_real_df in the same order as the names
-        # lists['labels']['posurines'] = [
-        #     urinespositives_real_df.loc[:, 'Class'].to_numpy().tolist() + [lists['labels']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['preds']['posurines']))
-        # ]
 
         lists['names']['posurines'] = [
             [lists['names']['posurines'][j][i] for i in to_keep] for j in range(len(lists['names']['posurines']))
@@ -932,9 +921,6 @@ class Train:
                 posurines_df[label] = np.concatenate(lists['proba']['posurines'])[:, i]
 
         except:
-            # lists['preds']['posurines'] = [
-            #     [lists['preds']['posurines'][j][i] for i in to_keep] + [lists['preds']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['preds']['posurines']))
-            # ]
             lists['preds']['posurines'] = [
                 [lists['preds']['posurines'][j][i] for i in to_keep] for j in range(len(lists['preds']['posurines']))
             ]
