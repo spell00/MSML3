@@ -549,7 +549,26 @@ class Train:
                     m = OneVsRestClassifier(m)
 
                 m.fit(train_data, lists['classes']['train'][-1], verbose=True)
-                log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path)
+                Xs = {
+                    'train': train_data,
+                    'valid': valid_data,
+                    'test': test_data,
+                    # 'posurines': all_data['inputs']['urinespositives'],
+                }
+                ys = {
+                    'train': lists['classes']['train'][-1],
+                    'valid': lists['classes']['valid'][-1],
+                    'test': lists['classes']['test'][-1],
+                    # 'posurines': np.array([np.argwhere(l == self.unique_labels)[0][0] for l in all_data['labels']['urinespositives']]),
+                }
+                args_dict = {
+                    'inputs': Xs,
+                    'labels': ys,
+                    'model': m,
+                    'model_name': self.args.model_name,
+                    'log_path': f'logs/{self.args.model_name}',
+                }
+                run = log_shap(run, args_dict)
             # save the features kept
             with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl', 'wb') as f:
                 pickle.dump(data_list['test']['inputs'].columns, f)

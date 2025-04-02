@@ -57,17 +57,20 @@ class MakeTensorsMultiprocess:
         """
 
         # Starts a csv file to record the time it takes to process each file
-        with open(f'{path}/{args.exp_name}/time.csv', 'w', newline='', encoding='utf-8') as f:
+        os.makedirs(f'{path}/{args.run_name}', exist_ok=True)
+        with open(f'{path}/{args.run_name}/time.csv', 'w', newline='', encoding='utf-8') as f:
             csv_writer = csv.writer(f)
             csv_writer.writerow(['File', 'Time', 'input_size(MB)', 'output_size(MB)'])
 
-        os.makedirs(f'{path}/{args.exp_name}/images', exist_ok=True)
-        os.makedirs(f'{path}/{args.exp_name}/csv', exist_ok=True)
+        os.makedirs(f'{path}/{args.run_name}/images', exist_ok=True)
+        os.makedirs(f'{path}/{args.run_name}/csv', exist_ok=True)
 
         self.bins = bins
         self.is_sparse = args.is_sparse
 
         self.path = path
+        # path to the tsv files
+        self.tsv_path = path.split('matrices')[0]
         self.tsv_list = tsv_list
         self.labels_list = labels_list
         self.save = args.save
@@ -81,6 +84,12 @@ class MakeTensorsMultiprocess:
             self.tsv_list = self.tsv_list[:args.n_samples]
             self.labels_list = self.labels_list[:args.n_samples]
         self.args = args
+        self.run_path = '\\'.join(self.tsv_list[0].split('/')[:-1])
+        # reinitiale the time file
+        with open(f'{self.run_path}/time.csv', 'w', newline='', encoding='utf-8') as f:
+            csv_writer = csv.writer(f)
+            csv_writer.writerow(['File', 'Time', 'input_size(MB)', 'output_size(MB)'])
+        
 
     def process(self, index):
         """
@@ -253,7 +262,7 @@ class MakeTensorsMultiprocess:
             print(
                 f"Finished file {index}. Total memory: {total_memory}  MB, time: {total_time} seconds"
             )
-            csv_file = f'{self.path}/{self.args.exp_name}/time.csv'
+            csv_file = f'{self.run_path}/time.csv'
             with open(csv_file, 'a', newline='', encoding='utf-8') as f:
                 csv_writer = csv.writer(f)
                 csv_writer.writerow([label, total_time, tsv_size, total_memory])
@@ -467,6 +476,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     args.exp_name = f'all_{args.train_batches}_gkf{args.groupkfold}_mz{args.min_mz}-{args.max_mz}rt{args.min_rt}-{args.max_rt}_{args.n_splits}splits'
+
     args.combat_corr = 0  # TODO to remove
 
     args.k = int(args.k)
@@ -515,9 +525,13 @@ if __name__ == "__main__":
         'rt_shift': args.shift
     }
 
+    # Directory where the matrices will be saved
     out_dest = f"{args.resources_path}/{args.experiment}/matrices"
 
+    # Directory of the present script
     script_dir = os.path.dirname(os.path.realpath(__file__))
+
+    # Directory of the inputs
     dir_name = f"{script_dir}/{out_dest}/mz{args.mz_bin}/rt{args.rt_bin}/mzp{args.mz_bin_post}/" \
                f"rtp{args.rt_bin_post}/thr{args.threshold}/{args.spd}spd/ms2/combat{args.combat_corr}/" \
                f"shift{args.shift}/{args.scaler}/log{args.log2}/{args.feature_selection}/"
@@ -532,13 +546,20 @@ if __name__ == "__main__":
         input_dir = f"{args.resources_path}/{args.experiment}/{batch}/tsv"
         dir_inputs += [f"{script_dir}/{input_dir}/mz{args.mz_bin}/rt{args.rt_bin}/{args.spd}spd/ms2/all/"]
 
+    # We might not need to keep all the signals
     cropings = f"mz{args.min_mz}-{args.max_mz}rt{args.min_rt}-{args.max_rt}"
 
+    # The name of the run is the name of the run + the name of the batches
     args.run_name = f"{args.run_name}_{'-'.join([b.split('-')[0] for b in batches])}_gkf{args.groupkfold}_{cropings}_{args.n_splits}splits"
     matrix_filename = f'{dir_name}/{args.run_name}/data_matrix_tmp.pkl'
     columns_filename = f'{dir_name}/{args.exp_name}/columns_nozeros.pkl'
     labels_filename = f'{dir_name}/{args.run_name}/labels.pkl'
     bacteria_to_keep = None
+
+    # if columns_filename not exists leave with message that the training has not been done
+    if not os.path.exists(columns_filename):
+        print(f"Columns file {columns_filename} does not exist. Run the training first.")
+        exit()
 
     if len(args.run_name.split(',')) > 1:
         bacteria_to_keep = args.run_name.split(',')
@@ -569,11 +590,15 @@ if __name__ == "__main__":
             'max_rt': max(max_rts), 
             'max_mz': max(max_mzs)
         }
+        # Creation of the columns
         rts = [np.round(rt * args.rt_bin_post, args.rt_rounding) for rt in range(max_features['max_rt'])]
         mzs = [np.round(mz * args.mz_bin_post, args.mz_rounding) for mz in range(max_features['max_mz'])]
         columns = np.array([f"{mz_min_parent}_{rt}_{mz}" for mz_min_parent in parents for rt in rts for mz in mzs])
 
+        # Adjust the tensors to have the same number of features
         data_matrices = adjust_tensors(data_matrices, max_features, args)
+
+        # When all tensors have the same number of features, we can stack them (sparse matrices)
         data_matrix = vstack([vstack(data_matrices[k]) for k in range(len(data_matrices))])
         print('\nComplete data shape', data_matrix.shape)
 
@@ -584,12 +609,11 @@ if __name__ == "__main__":
             peaks_list = pd.read_csv(f"{dir_name}/{args.run_name}/variance_scores.csv", index_col=0)
             data_matrix = msalign(data_matrix.columns, data_matrix.values)
         os.makedirs(f'{dir_name}/{args.run_name}', exist_ok=True)
-        columns_to_keep = load(open(columns_filename, 'rb'))  
+        columns_to_keep = load(open(columns_filename, 'rb'))
         to_keep = np.array([i for i, x in enumerate(columns) if x in columns_to_keep])  # TODO THIS IS CORRECT. THE ERROR MUST BE FURTHER DOWN
         data_matrix = sparse.lil_matrix(data_matrix[:,to_keep])  # TODO There are other instances where I could have used this function
         dump(data_matrix, open(matrix_filename, 'wb'))
         dump(labels, open(labels_filename, 'wb'))
-        
     else:
         data_matrix = load(open(matrix_filename, 'rb'))
         columns_to_keep = columns = load(open(columns_filename, 'rb'))

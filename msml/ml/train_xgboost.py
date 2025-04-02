@@ -24,7 +24,6 @@ from log_shap import log_shap
 import xgboost
 import matplotlib.pyplot as plt
 # import pipeline from sklearn
-from sklearn.pipeline import Pipeline
 from utils import columns_stats_over0
 
 import sys
@@ -576,10 +575,41 @@ class Train:
             model["model_size"] = run["model_size"] = get_size_in_mb(m)
 
         lists, posurines_df = self.save_confusion_matrices(all_data, lists, run)
+        self.save_calibration_curves(lists, run)
+        self.save_roc_curves(lists, run)
         if np.mean(lists['mcc']['valid']) > np.mean(self.best_scores['mcc']['valid']):
-            self.save_roc_curves(lists, run)
             if self.args.log_shap:
-                log_shap(run, m, data_list, all_data['inputs']['all'].columns, self.bins, self.log_path, self.unique_labels)
+                Xs = {
+                    'train': train_data,
+                    'valid': valid_data,
+                    'test': test_data,
+                    # 'posurines': all_data['inputs']['urinespositives'],
+                }
+                ys = {
+                    'train': lists['classes']['train'][-1],
+                    'valid': lists['classes']['valid'][-1],
+                    'test': lists['classes']['test'][-1],
+                    # 'posurines': np.array([np.argwhere(l == self.unique_labels)[0][0] for l in all_data['labels']['urinespositives']]),
+                }
+                labels = {
+                    'train': lists['labels']['train'][-1],
+                    'valid': lists['labels']['valid'][-1],
+                    'test': lists['labels']['test'][-1],
+                    # 'posurines': np.array([np.argwhere(l == self.unique_labels)[0][0] for l in all_data['labels']['urinespositives']]),
+                }
+                args_dict = {
+                    'inputs': Xs,
+                    'ys': ys,
+                    'labels': labels,
+                    'model': m,
+                    'model_name': self.args.model_name,
+                    'log_path': self.log_path,
+                }
+                run = log_shap(run, args_dict)
+                run['log_shap'] = 1
+            else:
+                run['log_shap'] = 0
+
             # save the features kept
             with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl', 'wb') as f:
                 pickle.dump(data_list['test']['inputs'].columns, f)
@@ -1103,6 +1133,85 @@ class Train:
             
         plot_bars(self.args, run, self.unique_labels)
         
+    def save_calibration_curves(self, lists, run):
+        # Use cross validation iterations stored in lists, loop over dont concat
+        # import calibration_curve
+        from sklearn.calibration import calibration_curve
+        for group in ['train', 'valid', 'test']:
+            for i in range(len(lists['proba'][group])):
+                try:
+                    fig = plt.figure()
+                    proba = lists['proba'][group][i]
+                    classes = lists['classes'][group][i]
+                    names = lists['names'][group][i]
+                    for j, label in enumerate(self.unique_labels):
+                        binary_class = [1 if c == j else 0 for c in classes]
+                        fop, mpv = calibration_curve(binary_class, proba[:, j], n_bins=10)
+                        plt.plot(mpv, fop, marker='o', label=label)
+                    plt.plot([0, 1], [0, 1], linestyle='--', color='black')
+                    plt.legend()
+                    plt.xlabel('TPR')
+                    plt.ylabel('TNR')
+                    fig.savefig(f'{self.log_path}/ROC/{self.name}_{self.args.model_name}_{group}_calibration.png')
+                    run[f'{group}/calibration'].upload(f'{self.log_path}/ROC/{self.name}_{self.args.model_name}_{group}_calibration.png')
+                except:
+                    pass
+
+    def save_calibration_intervals(self, lists, run):
+        from sklearn.calibration import calibration_curve
+        for group in ['train', 'valid', 'test']:
+            try:
+                fig, ax = plt.subplots()
+                for j, label in enumerate(self.unique_labels):
+                    # Collect all FOP and MPV from each cross-validation iteration
+                    prob_true = []
+                    prob_pred = []
+                    
+                    for i in range(len(lists['proba'][group])):
+                        proba = lists['proba'][group][i]
+                        classes = lists['classes'][group][i]
+                        binary_class = [1 if c == j else 0 for c in classes]
+                        
+                        # Compute the calibration curve for this iteration
+                        fop, mpv = calibration_curve(binary_class, proba[:, j], n_bins=10)
+                        prob_true.append(fop)
+                        prob_pred.append(mpv)
+                    
+                axs = plot_calibration_intervals({'prob_true': prob_true, 'prob_pred': prob_pred}, ax)
+
+                plt.xlabel('Mean Predicted Value')
+                plt.ylabel("Fraction of Positives")
+                os.makedirs(f"results/calibration/", exist_ok=True)
+                plt.savefig(f'results/calibration/{self.name}_{self.args.model_name}_{group}_calibration_CI.png')
+                plt.savefig(f'{self.log_path}/ROC/{self.name}_{self.args.model_name}_{group}_calibration_CI.png')
+                run[f'{group}/calibration_CI'].upload(f'{self.log_path}/ROC/{self.name}_{self.args.model_name}_{group}_calibration_CI.png')
+            except Exception as e:
+                print(f"Error generating calibration curve for {group}: {e}")
+                pass
+
+    def plot_calibration_intervals(results, ax):
+        # Compute mean and standard deviation for calibration curve
+        fpr_mean = np.linspace(0, 1, 100)
+        interp_tprs = []
+        for i in range(len(results['prob_true'])):
+            interp_tpr = np.interp(fpr_mean, results['prob_true'][i], results['prob_pred'][i])
+            interp_tpr[0] = 0.0
+            interp_tprs.append(interp_tpr)
+
+        tpr_mean = np.mean(interp_tprs, axis=0)
+        tpr_std = np.std(interp_tprs, axis=0)
+        
+        ax.set_title("Calibration Curve")            
+        tpr_upper = np.clip(tpr_mean + tpr_std, 0, 1)
+        tpr_lower = tpr_mean - tpr_std
+        ax.plot(fpr_mean, tpr_mean, lw=2, label=f"Mean Calibration Curve")
+        ax.fill_between(fpr_mean, tpr_lower, tpr_upper, alpha=.2)
+        ax.plot([0, 1], [0, 1], linestyle='--', color='black')
+        ax.legend(loc="lower right")
+        
+        return ax
+
+
     def save_roc_curves(self, lists, run):
         try:
             self.best_roc_train = plot_roc(lists['proba']['train'], lists['classes']['train'], self.unique_labels,
@@ -1241,6 +1350,7 @@ class Train:
         run[f'{group}/thresholds_table'].upload(
             f'{self.log_path}/saved_models/table_{self.args.model_name}_{group}_thresholds.csv'
         )
+
     def keep_models(self, scaler_name):
         """
         Remove the tmp from the name if the models are to be kept because the best yet
