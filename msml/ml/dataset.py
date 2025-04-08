@@ -596,8 +596,11 @@ def get_data_all(path, args, seed=42):
         # TODO load expected classes elsewhere
         urinespositives_real_df = pd.concat((
             pd.read_csv(f'resources/bacteries_2024/B10-05-03-2024/b10_patients_samples.csv'),
-            pd.read_csv(f'resources/bacteries_2024/B11-05-24-2024/b11_patients_samples.csv')
+            # pd.read_csv(f'resources/bacteries_2024/B11-05-24-2024/b11_patients_samples.csv'),
+            pd.read_csv(f'resources/bacteries_2024/BPatients-03-14-2025/patients_samples_20250318.csv'),
         ))
+        # Keep unique samples
+        urinespositives_real_df = urinespositives_real_df.drop_duplicates(subset=['ID'])
         urinespositives_real_df.loc[:, 'Class'] = [l.lower() for l in urinespositives_real_df.loc[:, 'Class'].to_numpy()]
         urinespositives_inds = np.array([i for i, x in enumerate(urinespositives_names) if x in urinespositives_real_df.loc[:, 'ID'].to_numpy()])
         # Get the labels of urinespositives_real_df in the same order as the names
@@ -608,25 +611,47 @@ def get_data_all(path, args, seed=42):
                 data[k]['urinespositives'] = []
             else:
                 data[k]['urinespositives'] = data[k]['urinespositives'][urinespositives_inds]
+
         data['labels']['urinespositives'] = np.array([
             urinespositives_real_df.loc[urinespositives_real_df.loc[:, 'ID'] == x, 'Class'].to_numpy()[0] for x in urinespositives_names[urinespositives_inds]
         ])
+        # find the labels that are not in the unique labels
+        unique_labels_set = set(unique_labels)
+        labels_to_remove = [label for label in data['labels']['urinespositives'] if label not in unique_labels_set]
+        inds_to_remove = [i for i, x in enumerate(data['labels']['urinespositives']) if x in labels_to_remove]
+        inds_to_keep = [i for i, x in enumerate(data['labels']['urinespositives']) if x not in labels_to_remove]
+        # Urines are present in the batch bpatients. Remove them in the bpatients
+        
+        seen = set()
+        urines_to_keep = []
+        for i in reversed(range(len(data['urines']['urinespositives']))):
+            x = data['urines']['urinespositives'][i]
+            if x not in seen:
+                seen.add(x)
+                urines_to_keep.insert(0, x)  # insert at front to maintain reverse order
+                inds_to_keep.insert(0, i)    # same for indices
+            else:
+                inds_to_remove.insert(0, i)
+        
+        inds_to_remove = np.unique(inds_to_remove)
+        inds_to_keep = np.unique(inds_to_keep)
+        # Remove the labels that are not in the unique labels
+        data['labels']['urinespositives'] = np.delete(data['labels']['urinespositives'], inds_to_remove)
+        data['batches']['urinespositives'] = np.delete(data['batches']['urinespositives'], inds_to_remove)
+        data['manips']['urinespositives'] = np.delete(data['manips']['urinespositives'], inds_to_remove)
+        data['urines']['urinespositives'] = np.delete(data['urines']['urinespositives'], inds_to_remove)
+        data['concs']['urinespositives'] = np.delete(data['concs']['urinespositives'], inds_to_remove)
+        data['orders']['urinespositives'] = np.delete(data['orders']['urinespositives'], inds_to_remove)
+        data['names']['urinespositives'] = np.delete(data['names']['urinespositives'], inds_to_remove)
+        # Remove the samples from the inputs
+        data['inputs']['urinespositives'] = data['inputs']['urinespositives'].iloc[inds_to_keep, :]
+
         data['cats']['urinespositives'] = np.array([
             np.where(x == unique_labels)[0][0] for i, x in enumerate(data['labels']['urinespositives'])
         ])
 
         if args.binary:
             urinespositives_real_df.loc[:, 'Class'] = ['blanc' if l == 'blanc' else 'bact' for l in urinespositives_real_df.loc[:, 'Class'].to_numpy()]
-
-        # Keep only eco
-        inds_to_keep = np.where(data['labels']['urinespositives'] == 'eco')[0]
-        for k in data.keys():
-            if k == 'inputs':
-                data[k]['urinespositives'] = data[k]['urinespositives'].iloc[inds_to_keep, :]            
-            elif k == 'sets':
-                data[k]['urinespositives'] = []
-            else:
-                data[k]['urinespositives'] = data[k]['urinespositives'][inds_to_keep]
 
 
     return data, unique_labels, unique_batches, unique_manips, unique_urines, unique_concs

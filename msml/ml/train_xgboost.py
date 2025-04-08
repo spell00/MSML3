@@ -221,6 +221,57 @@ class Train:
 
         all_data, scaler = scale_data(scaler_name, all_data)
         
+        # Basically just takes the samples back into training
+        if all_data['inputs']['urinespositives'].shape[0] > 0:
+            # b11_inds = np.argwhere(all_data['batches']['urinespositives'] == 'b11').flatten()
+            b10_inds = np.argwhere(all_data['batches']['urinespositives'] == 'b10').flatten()
+            # bpatients is where patients are not b10 or b11
+            bpatients = np.argwhere(all_data['batches']['urinespositives'] == 'bpatients').flatten()
+            # bpatients = np.delete(bpatients, np.concatenate((b10_inds, b11_inds)))
+            b_inds = np.concatenate((b10_inds, bpatients))
+            # bpatients_inds = np.argwhere(all_data['batches']['urinespositives'] == 'bpatients').flatten()
+            # b10_inds = np.concatenate((b10_inds, bpatients_inds))
+            urines10 = np.array([x.split('_')[-2] for x in all_data['names']['urinespositives'][b_inds]])
+            bact_u10 = np.unique(np.array([x for x in all_data['labels']['urinespositives'][b_inds]]))
+            from collections import Counter
+            print(Counter(all_data['labels']['urinespositives'][b_inds]))
+            
+            # b_inds = np.concatenate((b10_inds, b11_inds))
+            all_data['inputs']['all'] = pd.concat((all_data['inputs']['all'], all_data['inputs']['urinespositives'].iloc[b_inds]))
+            all_data['labels']['all'] = np.concatenate((all_data['labels']['all'], all_data['labels']['urinespositives'][b_inds]))
+            all_data['batches']['all'] = np.concatenate((all_data['batches']['all'], all_data['batches']['urinespositives'][b_inds]))
+            all_data['names']['all'] = np.concatenate((all_data['names']['all'], all_data['names']['urinespositives'][b_inds]))
+            all_data['concs']['all'] = np.concatenate((all_data['concs']['all'], all_data['concs']['urinespositives'][b_inds]))
+            # lists['names']['train'][-1] = train_names
+            # lists['batches']['train'][-1] = train_batches
+            # lists['inds']['train'][-1] = train_inds
+
+            # Remove b10 and bpatients from urinespositives
+            all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].drop(all_data['inputs']['urinespositives'].index[b_inds])
+            all_data['labels']['urinespositives'] = np.delete(all_data['labels']['urinespositives'], b_inds)
+            all_data['batches']['urinespositives'] = np.delete(all_data['batches']['urinespositives'], b_inds)
+            all_data['names']['urinespositives'] = np.delete(all_data['names']['urinespositives'], b_inds)
+            all_data['concs']['urinespositives'] = np.delete(all_data['concs']['urinespositives'], b_inds)
+            # Remove urines10 from urinespositives because duplicated
+            inds_to_keep = np.array([i for i, x in enumerate(all_data['names']['urinespositives']) if x.split('_')[-2] not in urines10])
+            all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[inds_to_keep]
+            all_data['labels']['urinespositives'] = all_data['labels']['urinespositives'][inds_to_keep]
+            all_data['batches']['urinespositives'] = all_data['batches']['urinespositives'][inds_to_keep]
+            all_data['names']['urinespositives'] = all_data['names']['urinespositives'][inds_to_keep]               
+            all_data['concs']['urinespositives'] = all_data['concs']['urinespositives'][inds_to_keep]
+
+        # Keep only eco
+        inds_to_keep = np.where(np.isin(all_data['labels']['urinespositives'], 'eco'))[0]
+        # inds_to_keep = np.where(np.isin(all_data['labels']['urinespositives'], bact_u10))[0]
+
+        for k in all_data.keys():
+            if k == 'inputs':
+                all_data[k]['urinespositives'] = all_data[k]['urinespositives'].iloc[inds_to_keep, :]            
+            elif k == 'sets':
+                all_data[k]['urinespositives'] = []
+            else:
+                all_data[k]['urinespositives'] = all_data[k]['urinespositives'][inds_to_keep]
+
 
         infos = {
             'scaler': scaler_name,
@@ -257,17 +308,18 @@ class Train:
 
         if self.args.groupkfold:
             self.args.n_repeats = len(np.unique(all_data['batches']['all']))
-        while h < self.args.n_repeats:                                
+        while h < self.args.n_repeats:
+            print(f'Fold: {h}')
             if self.args.train_on == 'all':
                 if self.args.groupkfold:
                     # skf = GroupShuffleSplit(n_splits=5, random_state=seed)
                     skf = StratifiedGroupKFold(n_splits=len(np.unique(all_data['batches']['all'])), shuffle=True, random_state=42)
                     train_nums = np.arange(0, len(all_data['labels']['all']))
-                    splitter = skf.split(train_nums, self.data['labels']['all'], all_data['batches']['all'])
+                    splitter = skf.split(train_nums, all_data['labels']['all'], all_data['batches']['all'])
                 else:
                     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
                     train_nums = np.arange(0, len(all_data['labels']['all']))
-                    splitter = skf.split(train_nums, self.data['labels']['all'], self.data['labels']['all'])
+                    splitter = skf.split(train_nums, all_data['labels']['all'], all_data['labels']['all'])
                 if h > 0 and h < self.args.n_repeats - 1:
                     for i in range(h):
                         _, _ = splitter.__next__()
@@ -393,21 +445,7 @@ class Train:
             lists['unique_batches']['valid'] += [list(np.unique(valid_batches))]
             lists['unique_batches']['test'] += [list(np.unique(test_batches))]
 
-            if all_data['inputs']['urinespositives'].shape[0] > 0:
-                b11_inds = np.argwhere(all_data['batches']['urinespositives'] == 'b11').flatten()
-                train_data = pd.concat((train_data, all_data['inputs']['urinespositives'].iloc[b11_inds]))
-                train_labels = np.concatenate((train_labels, all_data['labels']['urinespositives'][b11_inds]))
-                train_batches = np.concatenate((train_batches, all_data['batches']['urinespositives'][b11_inds]))
-                train_names = np.concatenate((train_names, all_data['names']['urinespositives'][b11_inds]))
-                lists['names']['train'][-1] = train_names
-                lists['batches']['train'][-1] = train_batches
-                lists['inds']['train'][-1] = train_inds
-                # Remove b10 from all_data
-                all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].drop(all_data['inputs']['urinespositives'].index[b11_inds])
-                all_data['labels']['urinespositives'] = np.delete(all_data['labels']['urinespositives'], b11_inds)
-                all_data['batches']['urinespositives'] = np.delete(all_data['batches']['urinespositives'], b11_inds)
-                all_data['names']['urinespositives'] = np.delete(all_data['names']['urinespositives'], b11_inds)
-
+            print(f"Batches. Train: {np.unique(train_batches)}, Valid: {np.unique(valid_batches)}, Test: {np.unique(test_batches)}")            
             if n_aug > 0:
                 train_data = train_data.fillna(0)
                 train_data = augment_data(train_data, n_aug, p, g)
@@ -569,14 +607,24 @@ class Train:
                 self.best_scores['acc']['valid'] = 0
 
             h += 1
+            try:
+                np.concatenate(lists['proba']['posurines']).max(1)
+            except:
+                print('DIM PROBLEM')
 
         ord_path = f"{'/'.join(self.log_path.split('/')[:-1])}/ords/"
         os.makedirs(ord_path, exist_ok=True)
-        log_ord(self.data, self.uniques, ord_path, scaler_name, run)
+        if self.args.log_plots:
+            log_ord(self.data, self.uniques, ord_path, scaler_name, run)
         data = copy.deepcopy(self.data)
         metrics = log_fct(data, scaler_name, metrics)
-        log_ord(data, self.uniques2, ord_path, f'{scaler_name}_blancs', run)
+        if self.args.log_plots:
+            log_ord(data, self.uniques2, ord_path, f'{scaler_name}_blancs', run)
 
+        try:
+            np.concatenate(lists['proba']['posurines']).max(1)
+        except:
+            print('DIM PROBLEM')
         if self.args.groupkfold:
             batches = np.concatenate([np.unique(x) for x in lists['batches']['valid']])
             toprint = [f"{batches[i]}:{lists['mcc']['valid'][i]}" for i in range(len(batches))]
@@ -595,7 +643,11 @@ class Train:
             model["best_iteration"] = run["best_iteration"] = np.round(np.mean([x for x in best_iteration]))
             model["model_size"] = run["model_size"] = get_size_in_mb(m)
 
-        lists, posurines_df = self.save_confusion_matrices(all_data, lists, run)
+        try:
+            np.concatenate(lists['proba']['posurines']).max(1)
+        except:
+            print('DIM PROBLEM')
+        lists, posurines_df = self.save_confusion_matrices(lists, run)
         self.save_calibration_curves(lists, run)
         self.save_roc_curves(lists, run)
         if np.mean(lists['mcc']['valid']) > np.mean(self.best_scores['mcc']['valid']):
@@ -790,19 +842,22 @@ class Train:
         lists['labels']['train'] = all_data['labels']['all']
 
         if all_data['inputs']['urinespositives'].shape[0] > 0:
-            b11_inds = np.argwhere(all_data['batches']['urinespositives'] == 'b11').flatten()
-            train_data = pd.concat((train_data, all_data['inputs']['urinespositives'].iloc[b11_inds]))
-            train_labels = np.concatenate((train_labels, all_data['labels']['urinespositives'][b11_inds]))
-            train_batches = np.concatenate((train_batches, all_data['batches']['urinespositives'][b11_inds]))
-            train_names = np.concatenate((train_names, all_data['names']['urinespositives'][b11_inds]))
-            lists['names']['train'][-1] = np.concatenate((lists['names']['train'][-1], all_data['names']['urinespositives'][b11_inds]))
-            lists['batches']['train'][-1] = np.concatenate((lists['batches']['train'][-1], all_data['batches']['urinespositives'][b11_inds]))
-            lists['inds']['train'][-1] = np.concatenate((train_data.shape[0]))
+            # b11_inds = np.argwhere(all_data['batches']['urinespositives'] == 'b11').flatten()
+            b_inds = np.argwhere(all_data['batches']['urinespositives'] == 'b10').flatten()
+            # b_inds = np.concatenate((b10_inds, b11_inds))
+            if 'b10' in lists['unique_batches']['train']:
+                train_data = pd.concat((train_data, all_data['inputs']['urinespositives'].iloc[b_inds]))
+                train_labels = np.concatenate((train_labels, all_data['labels']['urinespositives'][b_inds]))
+                train_batches = np.concatenate((train_batches, all_data['batches']['urinespositives'][b_inds]))
+                train_names = np.concatenate((train_names, all_data['names']['urinespositives'][b_inds]))
+                lists['names']['train'][-1] = np.concatenate((lists['names']['train'][-1], all_data['names']['urinespositives'][b_inds]))
+                lists['batches']['train'][-1] = np.concatenate((lists['batches']['train'][-1], all_data['batches']['urinespositives'][b_inds]))
+                lists['inds']['train'][-1] = np.concatenate((train_data.shape[0]))
             # Remove b10 from all_data
-            all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].drop(b11_inds)
-            all_data['labels']['urinespositives'] = np.delete(all_data['labels']['urinespositives'], b11_inds)
-            all_data['batches']['urinespositives'] = np.delete(all_data['batches']['urinespositives'], b11_inds)
-            all_data['names']['urinespositives'] = np.delete(all_data['names']['urinespositives'], b11_inds)
+            all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].drop(b_inds)
+            all_data['labels']['urinespositives'] = np.delete(all_data['labels']['urinespositives'], b_inds)
+            all_data['batches']['urinespositives'] = np.delete(all_data['batches']['urinespositives'], b_inds)
+            all_data['names']['urinespositives'] = np.delete(all_data['names']['urinespositives'], b_inds)
 
         if n_aug > 0:
             train_data = augment_data(all_data['inputs']['all'], n_aug, p, g)
@@ -934,93 +989,28 @@ class Train:
         # add ari, ami and nbe to run
         return self.best_params_dict
 
-    def make_predictions(self, all_data, lists, run):
-        # # TODO Make urinespositives_real_df complete by adding the missing blank samples
-        # urinespositives_names = np.array([x.split('_')[-2] for x in all_data['names']['urinespositives']])
-        # urinespositives_batches = np.array([x for x in all_data['batches']['urinespositives']])
-        # # TODO load expected classes elsewhere
-        # urinespositives_real_df = pd.concat((
-        #     pd.read_csv(f'resources/bacteries_2024/B10-05-03-2024/b10_patients_samples.csv'),
-        #     pd.read_csv(f'resources/bacteries_2024/B11-05-24-2024/b11_patients_samples.csv')
-        # ))
-        # urinespositives_names = np.array([x for x in urinespositives_names if x in urinespositives_real_df.loc[:, 'ID'].to_numpy()])
-        # urinespositives_names = np.unique(urinespositives_names)
-        # urinespositives_real_df.loc[:, 'Class'] = [l.lower() for l in urinespositives_real_df.loc[:, 'Class'].to_numpy()]
-        # if self.args.binary:
-        #     urinespositives_real_df.loc[:, 'Class'] = ['blanc' if l == 'blanc' else 'bact' for l in urinespositives_real_df.loc[:, 'Class'].to_numpy()]
-        # intersect = np.intersect1d(urinespositives_names, urinespositives_real_df.loc[:, 'ID'].to_numpy())
-        # to_keep = [i for i, x in enumerate(urinespositives_names) if x in intersect]
-        # urinespositives_names = urinespositives_names[to_keep]
-        # urinespositives_batches = urinespositives_batches[to_keep]
-        # to_keep = [i for i, x in enumerate(urinespositives_real_df.loc[:, 'ID']) if x in intersect]
-        # urinespositives_real_df = urinespositives_real_df.iloc[to_keep]
-        # new_order = np.argsort(urinespositives_names)
-        # urinespositives_real_df = urinespositives_real_df.iloc[new_order]
+    def make_predictions(self, lists, run):
         blanc_ids = [
-            np.array([i for i, (x, b) in enumerate(zip(lists['labels']['valid'][j], lists['batches']['valid'][j])) if x == 'blanc' and b == 'b10']) for j in range(len(lists['labels']['valid']))
+            np.array([i for i, (x, b) in enumerate(zip(lists['labels']['valid'][j], lists['batches']['valid'][j]))
+                      if x == 'blanc' and b in ['b11']]) for j in range(len(lists['labels']['valid']))
         ]
-        # Remove empty lists
-        # blanc_ids = [x for x in blanc_ids if len(x) > 0]
-        # # lists['names']['posurines'] = [
-        #     [lists['names']['posurines'][j][i] for i in to_keep] + [lists['names']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['names']['posurines']))
-        # ]
-        # lists['batches']['posurines'] = [
-        #     [lists['batches']['posurines'][j][i] for i in to_keep] + [lists['batches']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['batches']['posurines']))
-        # ]
-        # Get the labels of urinespositives_real_df in the same order as the names
-        # lists['labels']['posurines'] = [
-        #     urinespositives_real_df.loc[:, 'Class'].to_numpy().tolist() + [lists['labels']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['preds']['posurines']))
-        # ]
-
-        # lists['names']['posurines'] = [
-        #     [lists['names']['posurines'][j][i] for i in to_keep] for j in range(len(lists['names']['posurines']))
-        # ]
-        # lists['batches']['posurines'] = [
-        #     [lists['batches']['posurines'][j][i] for i in to_keep] for j in range(len(lists['batches']['posurines']))
-        # ]
-        # # Get the labels of urinespositives_real_df in the same order as the names
-        # lists['labels']['posurines'] = [
-        #     urinespositives_real_df.loc[:, 'Class'].to_numpy().tolist() for j in range(len(lists['preds']['posurines']))
-        # ]
-
-        # urinespositives_real_df = urinespositives_real_df.loc[:, 'Class'].to_numpy()
-        
         try:
-            # lists['preds']['posurines'] = [
-            #     [lists['preds']['posurines'][j][i] for i in to_keep] for j in range(len(lists['preds']['posurines']))
-            # ]
-            # lists['proba']['posurines'] = [
-            #     [lists['proba']['posurines'][j][i] for i in to_keep] for j in range(len(lists['proba']['posurines']))
-            # ]
-            posurines_df = pd.DataFrame(
-                {
-                    'names': np.concatenate(lists['names']['posurines']),
-                    'cv': np.concatenate([np.ones(len(x)) * i for i, x in enumerate(lists['preds']['posurines'])]),
-                    'batches': np.concatenate(lists['batches']['posurines']),
-                    'preds': np.concatenate(lists['preds']['posurines']),
-                    'labels': np.concatenate(lists['labels']['posurines']),                
-                    'proba': np.concatenate(lists['proba']['posurines']).max(1),                    
-                }
-            )
-            for i, label in enumerate(self.unique_labels):
-                posurines_df[label] = np.concatenate(lists['proba']['posurines'])[:, i]
-
+            np.concatenate(lists['proba']['posurines']).max(1)
         except:
-            # lists['preds']['posurines'] = [
-            #     [lists['preds']['posurines'][j][i] for i in to_keep] + [lists['preds']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['preds']['posurines']))
-            # ]
-            lists['preds']['posurines'] = [
-                [lists['preds']['posurines'][j][i] for i in to_keep] for j in range(len(lists['preds']['posurines']))
-            ]
-            posurines_df = pd.DataFrame(
-                {
-                    'names': np.concatenate([urinespositives_names for _ in range(len(lists['preds']['posurines']))]),
-                    'cv': np.concatenate([np.ones(len(x)) * i for i, x in enumerate(lists['preds']['posurines'])]),
-                    'batches': np.concatenate([urinespositives_batches for _ in range(len(lists['preds']['posurines']))]),
-                    'preds': np.concatenate(lists['preds']['posurines']),
-                    'labels': np.concatenate([urinespositives_real_df.loc[:, 'Class'] for _ in range(len(lists['preds']['posurines']))]),                
-                }
-            )
+            print('DIM PROBLEM')
+        posurines_df = pd.DataFrame(
+            {
+                'names': np.concatenate(lists['names']['posurines']),
+                'cv': np.concatenate([np.ones(len(x)) * i for i, x in enumerate(lists['preds']['posurines'])]),
+                'batches': np.concatenate(lists['batches']['posurines']),
+                'preds': np.concatenate(lists['preds']['posurines']),
+                'labels': np.concatenate(lists['labels']['posurines']),                
+                'proba': np.concatenate(lists['proba']['posurines']).max(1),                    
+            }
+        )
+        for i, label in enumerate(self.unique_labels):
+            posurines_df[label] = np.concatenate(lists['proba']['posurines'])[:, i]
+
         posurines_df.loc[:, 'preds'] = [
             self.unique_labels[l] for l in posurines_df.loc[:, 'preds'].to_numpy()
         ]
@@ -1046,46 +1036,30 @@ class Train:
         blk_preds = flatten([
             [lists['preds']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['preds']['posurines'])) if len(blanc_ids[j]) > 0
         ])
-        try:
-            if self.args.groupkfold:
-                reps_to_use = [0 if 'b10' in lists['batches']['train'][i] else 1 for i in range(len(lists['proba']['posurines']))]
-                # use only the reps of reps_to_use in the proba
-                lists['proba']['posurines'] = np.stack([
-                    lists['proba']['posurines'][i] for i in range(len(lists['proba']['posurines'])) if reps_to_use[i] == 1
-                ])
-                
-            proba_posurines = np.stack(lists['proba']['posurines']).mean(0)
-            preds_posurines = proba_posurines.argmax(1)
-            best_proba_posurines = np.array([
-                proba_posurines[i, x] for i, x in enumerate(preds_posurines)
+        if self.args.groupkfold:
+            reps_to_use = [0 if 'b11' in lists['batches']['train'][i] or ('b10' not in lists['batches']['train'][i] or 'bpatients' not in lists['batches']['train'][i]) else 1 for i in range(len(lists['proba']['posurines']))]
+            # use only the reps of reps_to_use in the proba
+            lists['proba']['posurines'] = np.stack([
+                lists['proba']['posurines'][i] for i in range(len(lists['proba']['posurines'])) if reps_to_use[i] == 1
             ])
-            blk_proba = np.stack(flatten([
-                [lists['proba']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['preds']['posurines'])) if len(blanc_ids[j]) > 0
-            ]))
 
-            posurines_df = pd.DataFrame(
-                {
-                    'names': lists['names']['posurines'][0].tolist() + blk_names,
-                    'batches': lists['batches']['posurines'][0].tolist() + blk_batches,
-                    'preds': lists['preds']['posurines'][0].tolist() + blk_preds,
-                    'labels': lists['labels']['posurines'][0].tolist() + blk_labels,                
-                    'proba': np.concatenate((proba_posurines.max(1).flatten(), blk_proba.max(1).flatten())),                    
-                }
-            )
-            proba_posurines = np.concatenate((proba_posurines, blk_proba))
-            for i, label in enumerate(self.unique_labels):
-                posurines_df[label] = proba_posurines[:, i]
-        except:
-            preds_posurines = np.stack(lists['preds']['posurines'])
-            preds_posurines = stats.mode(preds_posurines, axis=0)[0].flatten()
-            posurines_df = pd.DataFrame(
-                {
-                    'names': urinespositives_names,
-                    'batches': urinespositives_batches,
-                    'preds': preds_posurines,
-                    'labels': urinespositives_real_df.loc[:, 'Class'],                
-                }
-            )
+        proba_posurines = np.stack(lists['proba']['posurines']).mean(0)
+        blk_proba = np.stack(flatten([
+            [lists['proba']['valid'][j][i] for i in blanc_ids[j]] for j in range(len(lists['preds']['posurines'])) if len(blanc_ids[j]) > 0
+        ]))
+
+        posurines_df = pd.DataFrame(
+            {
+                'names': lists['names']['posurines'][0].tolist() + blk_names,
+                'batches': lists['batches']['posurines'][0].tolist() + blk_batches,
+                'preds': lists['preds']['posurines'][0].tolist() + blk_preds,
+                'labels': lists['labels']['posurines'][0].tolist() + blk_labels,                
+                'proba': np.concatenate((proba_posurines.max(1).flatten(), blk_proba.max(1).flatten())),                    
+            }
+        )
+        proba_posurines = np.concatenate((proba_posurines, blk_proba))
+        for i, label in enumerate(self.unique_labels):
+            posurines_df[label] = proba_posurines[:, i]
 
         posurines_df.loc[:, 'preds'] = [
             self.unique_labels[l] for l in posurines_df.loc[:, 'preds'].to_numpy()
@@ -1453,9 +1427,9 @@ class Train:
         self.best_scores['mcc']['valid'] = lists['mcc']['valid']
         self.best_scores['mcc']['test'] = lists['mcc']['test']
         
-    def save_confusion_matrices(self, all_data, lists, run):
+    def save_confusion_matrices(self, lists, run):
         relevant_samples = []
-        posurines_df, lists = self.make_predictions(all_data, lists, run)
+        posurines_df, lists = self.make_predictions(lists, run)
         relevant_samples = [i for i, l in enumerate(posurines_df.loc[:, 'labels'].to_numpy()) if l in self.unique_labels]
         if len(relevant_samples) > 0:
             posurines_df = posurines_df.iloc[relevant_samples]

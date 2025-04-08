@@ -72,6 +72,7 @@ if __name__ == '__main__':
     parser.add_argument("--colsample_bytree", type=float, default=1.0)
     parser.add_argument("--max_bin", type=int, default=256)
     parser.add_argument("--sparse_matrix", type=int, default=0)
+    parser.add_argument("--log_plots", type=int, default=1)
 
     args = parser.parse_args()
     if args.mz < 1:
@@ -107,7 +108,7 @@ if __name__ == '__main__':
         'B1-02-02-2024'
     ]
     batches_to_keep = [
-        "bpatients-03-14-2025", "b15-06-29-2024",
+        "BPatients-03-14-2025", "b15-06-29-2024",
         "b14-06-10-2024", "b13-06-05-2024", "b12-05-31-2024", "b11-05-24-2024",
         "b10-05-03-2024", "b9-04-22-2024", "b8-04-15-2024", 
         'b7-04-03-2024', 'b6-03-29-2024', 'b5-03-13-2024', 
@@ -291,9 +292,9 @@ if __name__ == '__main__':
             Real(0, 0.5, 'uniform', name='g'),
             Integer(4, 5, 'uniform', name='max_depth'), # BEST WAS DEFAULT
             Real(10, 20, 'uniform', name='early_stopping_rounds'), # 
-            Integer(100, 150, 'uniform', name='n_estimators'),
+            Integer(1, 2, 'uniform', name='n_estimators'),
             # Categorical(['binary:logistic'], name='objective'),
-            Categorical(['minmax2'], name="scaler"),
+            Categorical(['zscore', 'minmax2'], name="scaler"),
         ]
     elif args.model_name == 'xgboostda':
         print('XGBOOST DASK')
