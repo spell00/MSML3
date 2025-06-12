@@ -17,3 +17,6 @@ msalign
 pynvml
 dask_cuda
 dask
+bernn
+numpy
+optuna

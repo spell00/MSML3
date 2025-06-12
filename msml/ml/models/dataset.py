@@ -210,12 +210,9 @@ def load_checkpoint(checkpoint_path,
         optimizer.load_state_dict(checkpoint_dict['optimizer'])
     state_dict = checkpoint_dict['model']
     model.load_state_dict(state_dict)
-    try:
-        losses_recon = checkpoint_dict['losses_recon']
-        kl_divs = checkpoint_dict['kl_divs']
-    except:
-        losses_recon = None
-        kl_divs = None
+
+    losses_recon = checkpoint_dict.get('losses_recon')
+    kl_divs = checkpoint_dict.get('kl_divs')
 
     losses = checkpoint_dict['losses']
     print("Loaded checkpoint '{}' (epoch {})".format(checkpoint_path, epoch))
@@ -914,10 +911,12 @@ class MSImages:
     def __len__(self):
         return len(self.fnames)
 
+
 def minmax_scale(mat_data):
     # mat_data = np.stack(list(mat_data))
     mat_data = mat_data / mat_data.max()
     return mat_data
+
 
 class MSCSV:
     def __init__(self, path, scaler, new_size=32, test=False, resize=True):
@@ -1264,228 +1263,3 @@ class MSCSV2:
 
     def __len__(self):
         return len(self.fnames)
-
-
-class MSDataset4(Dataset):
-    def __init__(self, data, meta, names=None, labels=None, batches=None, transform=None, quantize=False,
-                 remove_paddings=False, crop_size=-1, add_noise=False, random_recs=False, triplet_dloss=False,
-                 device='cuda'):
-        self.random_recs = random_recs
-        self.crop_size = crop_size
-        self.samples = data
-        self.add_noise = add_noise
-        self.names = names
-        self.meta = meta
-        self.transform = transform
-        self.crop_size = crop_size
-        self.labels = labels
-        self.unique_labels = list(set(labels))
-        self.batches = batches
-        self.unique_batches = np.unique(batches)
-        self.quantize = quantize
-        self.remove_paddings = remove_paddings
-        labels_inds = {label: [i for i, x in enumerate(labels) if x == label] for label in self.unique_labels}
-        batches_inds = {batch: [i for i, x in enumerate(batches) if x == batch] for batch in self.unique_batches}
-        # try:
-        self.labels_data = {label: data[labels_inds[label]] for label in labels}
-        self.labels_meta_data = {label: meta[labels_inds[label]] for label in labels}
-        self.batches_data = {batch: data[batches_inds[batch]] for batch in batches}
-        self.batches_meta_data = {batch: meta[batches_inds[batch]] for batch in batches}
-        # except:
-        #     print(labels)
-        self.n_labels = {label: len(self.labels_data[label]) for label in labels}
-        self.n_batches = {batch: len(self.batches_data[batch]) for batch in batches}
-        self.triplet_dloss = triplet_dloss
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        meta_pos_batch_sample = None
-        meta_neg_batch_sample = None
-        meta_to_rec = None
-        if self.labels is not None:
-            label = self.labels[idx]
-            batch = self.batches[idx]
-            try:
-                name = self.names[idx]
-            except:
-                name = str(self.names.iloc[idx])
-            try:
-                meta_to_rec = self.meta[idx]
-            except:
-                meta_to_rec = self.meta.iloc[idx].to_numpy()
-
-        else:
-            label = None
-            batch = None
-            name = None
-        if self.random_recs:
-            to_rec = self.labels_data[label][np.random.randint(0, self.n_labels[label])].copy()
-            not_label = None
-            while not_label == label or not_label is None:
-                not_label = self.unique_labels[np.random.randint(0, len(self.unique_labels))].copy()
-            ind = np.random.randint(0, self.n_labels[not_label])
-            not_to_rec = self.labels_data[not_label][ind].copy()
-            meta_not_to_rec = self.labels_meta_data[not_label][ind].copy()
-            meta_to_rec = self.meta[idx]
-        else:
-            to_rec = self.samples[idx].copy()
-            not_to_rec = np.array([0])
-        if self.triplet_dloss and len(self.unique_batches) > 1:
-            not_batch_label = None
-            while not_batch_label == batch or not_batch_label is None:
-                not_batch_label = self.unique_batches[np.random.randint(0, len(self.unique_batches))].copy()
-            pos_ind = np.random.randint(0, self.n_batches[batch])
-            neg_ind = np.random.randint(0, self.n_batches[not_batch_label])
-            pos_batch_sample = self.batches_data[batch][pos_ind].copy()
-            neg_batch_sample = self.batches_data[not_batch_label][neg_ind].copy()
-            meta_pos_batch_sample = self.batches_meta_data[batch][pos_ind].copy()
-            meta_neg_batch_sample = self.batches_meta_data[not_batch_label][neg_ind].copy()
-        else:
-            pos_batch_sample = self.samples[idx].copy()
-            neg_batch_sample = self.samples[idx].copy()
-            meta_pos_batch_sample = self.samples[idx].copy()
-            meta_neg_batch_sample = self.samples[idx].copy()
-        x = self.samples[idx]
-        if self.crop_size != -1:
-            max_start_crop = x.shape[1] - self.crop_size
-            ran = np.random.randint(0, max_start_crop)
-            x = torch.Tensor(x)[:, ran:ran + self.crop_size]  # .to(device)
-        if self.transform:
-            try:
-                x = self.transform(x.transpose([1, 2, 0])).reshape(x.shape)
-                to_rec = self.transform(to_rec.transpose([1, 2, 0])).squeeze().reshape(to_rec.shape)
-                if len(not_to_rec.shape) > 1:
-                    not_to_rec = self.transform(not_to_rec.transpose([1, 2, 0])).squeeze().reshape(x.shape)
-                if len(pos_batch_sample.shape) > 1:
-                    pos_batch_sample = self.transform(pos_batch_sample.transpose([1, 2, 0])).squeeze().reshape(x.shape)
-                    neg_batch_sample = self.transform(neg_batch_sample.transpose([1, 2, 0])).squeeze().reshape(x.shape)
-            except:
-                x = self.transform(x).reshape(x.shape)
-                to_rec = self.transform(to_rec).squeeze().reshape(to_rec.shape)
-                if len(not_to_rec.shape) > 1:
-                    not_to_rec = self.transform(not_to_rec).squeeze().reshape(x.shape)
-                if len(pos_batch_sample.shape) > 1:
-                    pos_batch_sample = self.transform(pos_batch_sample).squeeze().reshape(x.shape)
-                    neg_batch_sample = self.transform(neg_batch_sample).squeeze().reshape(x.shape)
-
-        if self.add_noise:
-            if np.random.random() > 0.5:
-                x = x * (Variable(x.data.new(x.size()).normal_(0, 0.1)) > -.1).type_as(x)
-        return x, meta_to_rec, name, label, batch, to_rec, not_to_rec, pos_batch_sample, neg_batch_sample, \
-            meta_pos_batch_sample, meta_neg_batch_sample
-
-class MSDataset5(Dataset):
-    def __init__(self, data, meta, names=None, labels=None, batches=None, sets=None, transform=None, quantize=False,
-                 remove_paddings=False, crop_size=-1, add_noise=False, random_recs=False, triplet_dloss=False,
-                 device='cuda'):
-        self.random_recs = random_recs
-        self.crop_size = crop_size
-        self.samples = data
-        self.sets = sets
-        self.add_noise = add_noise
-        self.names = names
-        self.meta = meta
-        self.transform = transform
-        self.crop_size = crop_size
-        self.labels = labels
-        self.unique_labels = list(set(labels))
-        self.batches = batches
-        self.unique_batches = np.unique(batches)
-        self.quantize = quantize
-        self.remove_paddings = remove_paddings
-        self.labels_inds = {label: [i for i, x in enumerate(labels) if x == label] for label in self.unique_labels}
-        self.batches_inds = {batch: [i for i, x in enumerate(batches) if x == batch] for batch in self.unique_batches}
-        # try:
-        # self.labels_data = {label: data[labels_inds[label]] for label in labels}
-        # self.labels_meta_data = {label: meta[labels_inds[label]] for label in labels}
-        # self.batches_data = {batch: data[batches_inds[batch]] for batch in batches}
-        # self.batches_meta_data = {batch: meta[batches_inds[batch]] for batch in batches}
-        # except:
-        #     print(labels)
-        # self.n_labels = {label: len(self.labels_data[label]) for label in labels}
-        # self.n_batches = {batch: len(self.batches_data[batch]) for batch in batches}
-        self.triplet_dloss = triplet_dloss
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        meta_pos_batch_sample = None
-        meta_neg_batch_sample = None
-        meta_to_rec = None
-        if self.labels is not None:
-            label = self.labels[idx]
-            set = self.sets[idx]
-            batch = self.batches[idx]
-            try:
-                name = self.names[idx]
-            except:
-                name = str(self.names.iloc[idx])
-            try:
-                meta_to_rec = self.meta[idx]
-            except:
-                meta_to_rec = self.meta.iloc[idx].to_numpy()
-
-        else:
-            label = None
-            batch = None
-            name = None
-            set = None
-        if self.random_recs:
-            to_rec = self.samples[self.labels_inds[label][np.random.randint(0, len(self.labels_inds[label]))].copy()]
-            not_label = None
-            while not_label == label or not_label is None:
-                not_label = self.unique_labels[np.random.randint(0, len(self.unique_labels))].copy()
-            ind = np.random.randint(0, len(self.labels_inds[not_label]))
-            not_to_rec = self.samples[self.labels_inds[not_label][not_label][ind].copy()]
-            meta_not_to_rec = self.meta[self.labels_inds[not_label][not_label][ind].copy()]
-            meta_to_rec = self.meta[idx]
-        else:
-            to_rec = self.samples[idx]
-            not_to_rec = np.array([0])
-        if (self.triplet_dloss == 'revTriplet' or 'inverseTriplet' in self.triplet_dloss) and len(self.unique_batches) > 1:
-            not_batch_label = None
-            while not_batch_label == batch or not_batch_label is None:
-                not_batch_label = self.unique_batches[np.random.randint(0, len(self.unique_batches))]#.copy()
-            pos_ind = np.random.randint(0, len(self.batches_inds[batch]))
-            neg_ind = np.random.randint(0, len(self.batches_inds[not_batch_label]))
-            pos_batch_sample = self.samples[self.batches_inds[batch][pos_ind]].copy()
-            neg_batch_sample = self.samples[self.batches_inds[not_batch_label][neg_ind]].copy()
-            meta_pos_batch_sample = self.meta[self.batches_inds[batch][pos_ind]].copy()
-            meta_neg_batch_sample = self.meta[self.batches_inds[not_batch_label][neg_ind]].copy()
-        else:
-            pos_batch_sample = np.array([0])
-            neg_batch_sample = np.array([0])
-            meta_pos_batch_sample = np.array([0])
-            meta_neg_batch_sample = np.array([0])
-        x = self.samples[idx]
-        if self.crop_size != -1:
-            max_start_crop = x.shape[1] - self.crop_size
-            ran = np.random.randint(0, max_start_crop)
-            x = torch.Tensor(x)[:, ran:ran + self.crop_size]  # .to(device)
-        if self.transform:
-            if len(x.shape) > 2:
-                r = np.random.randint(0, len(x))
-                x = x[r]
-                to_rec = to_rec[r]
-            x = self.transform(x).squeeze()
-            to_rec = self.transform(to_rec).squeeze()
-            if len(not_to_rec.shape) > 1:
-                not_to_rec = self.transform(not_to_rec).squeeze()
-                if len(not_to_rec.shape) > 2:
-                    not_to_rec = not_to_rec[r]
-            if len(pos_batch_sample.shape) > 1:
-                if len(neg_batch_sample.shape) > 2:
-                    neg_batch_sample = neg_batch_sample[r]
-                    pos_batch_sample = pos_batch_sample[r]
-                pos_batch_sample = self.transform(pos_batch_sample).squeeze()
-                neg_batch_sample = self.transform(neg_batch_sample).squeeze()
-
-        if self.add_noise:
-            if np.random.random() > 0.5:
-                x = x * (Variable(x.data.new(x.size()).normal_(0, 0.1)) > -.1).type_as(x)
-        return x, meta_to_rec, name, label, batch, to_rec, not_to_rec, pos_batch_sample, neg_batch_sample, \
-            meta_pos_batch_sample, meta_neg_batch_sample, set
-

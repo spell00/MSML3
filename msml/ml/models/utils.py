@@ -73,6 +73,7 @@ def to_categorical(y, num_classes):
     """
     return torch.eye(num_classes, dtype=torch.int)[y]
 
+
 def columns_stats(df, name, inference=False):
     """
     This column takes a pandas DataFrame and returns the number of non-zero columns
@@ -135,7 +136,7 @@ def columns_stats(df, name, inference=False):
             mz_parents_counts[features_binning[0]] += 1
             mz_children_counts[features_binning[1]] += 1
             rt_counts[features_binning[2]] += 1
-    
+
     # Sort the dicts by numerical value
     mz_parents_counts = dict(sorted(mz_parents_counts.items(), key=lambda item: item[1], reverse=True))
     mz_children_counts = dict(sorted(mz_children_counts.items(), key=lambda item: item[1], reverse=True))
@@ -151,8 +152,6 @@ def columns_stats(df, name, inference=False):
     ax[2].set_title('RT')
     plt.tight_layout()
     plt.savefig(f'columns_zeros_stats_{name}_{inference}.png')
-    
-
 
 
 def plot_confusion_matrix(cm, class_names, acc, mcc):

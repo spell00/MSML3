@@ -645,6 +645,7 @@ def to_csv(lists, complete_log_path, columns):
             f'{complete_log_path}/encs.csv')
     return rec_data, enc_data
 
+
 def get_empty_lists():
     return {
         'preds': {
@@ -719,8 +720,6 @@ def get_empty_lists():
             'test': [],
             'posurines': [],
         },
-        
-        
         'bact_preds': {
             'train': [],
             'valid': [],
@@ -763,9 +762,6 @@ def get_empty_lists():
             'test': [],
             'posurines': [],
         },
-
-        
-        
         'inds': {
             'train': [],
             'valid': [],
@@ -773,6 +769,30 @@ def get_empty_lists():
             'posurines': [],
         },
         'batches': {
+            'train': [],
+            'valid': [],
+            'test': [],
+            'posurines': [],
+        },
+        'batches_labels': {
+            'train': [],
+            'valid': [],
+            'test': [],
+            'posurines': [],
+        },
+        'manips': {
+            'train': [],
+            'valid': [],
+            'test': [],
+            'posurines': [],
+        },
+        'urines': {
+            'train': [],
+            'valid': [],
+            'test': [],
+            'posurines': [],
+        },
+        'concs': {
             'train': [],
             'valid': [],
             'test': [],
@@ -786,10 +806,12 @@ def get_empty_lists():
         }
     }
 
+
 def softmax(x):
     """Compute softmax values for each sets of scores in x."""
     e_x = np.exp(x - np.max(x))
     return e_x / e_x.sum(axis=0)
+
 
 def remove_zero_cols(data, threshold):
     columns = data.columns

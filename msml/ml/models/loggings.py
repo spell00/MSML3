@@ -652,7 +652,7 @@ def get_metrics(lists, values, model):
     for group in ['all', 'train', 'valid', 'test']:
         if len(lists[group]['inputs']) > 0:
             try:
-                classes = np.array(np.concatenate(lists[group]['classes']), np.int)
+                classes = np.array(np.concatenate(lists[group]['classes']), int)
             except:
                 pass
 
@@ -1544,7 +1544,7 @@ def log_input_ordination(logger, data, scaler, mlops, epoch=0):
         data['atn'] = {}
         for group in ['train', 'valid', 'test']:
             tmp = scaler.inverse_transform(data['inputs'][group])
-            data['gender'][group] = tmp[:, -1].astype(np.int)
+            data['gender'][group] = tmp[:, -1].astype(int)
             data['age'][group] = tmp[:, -2]
             data['atn'][group] = tmp[:, -5:-2]
             data['atn'][group] = np.array([str(x) for x in data['atn'][group]])

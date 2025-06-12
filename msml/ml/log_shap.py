@@ -7,7 +7,6 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from PIL import Image
-import xgboost
 # import StratifiedShuffleSplit\
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis

@@ -187,12 +187,13 @@ def plot_intervals(results, axs, method="GRU"):
 
     tpr_upper = np.clip(tpr_mean + tpr_std, 0, 1)
     tpr_lower = tpr_mean - tpr_std
-    axs.plot(fpr_mean, tpr_mean, lw=2, 
-                label=f"{method} AUC = {np.round(np.mean(results['auc']), 2)} ± {np.round(np.std(results['auc']), 2)}")
+    axs.plot(fpr_mean, tpr_mean, lw=2,
+             label=f"{method} AUC = {np.round(np.mean(results['auc']), 2)} ± {np.round(np.std(results['auc']), 2)}")
     axs.fill_between(fpr_mean, tpr_lower, tpr_upper, alpha=.2)
     axs.legend(loc="lower right")
 
     return axs
+
 
 def plot_roc(y_pred_proba, y_test, unique_labels, name, binary, acc, run):
     dirs = '/'.join(name.split('/')[:-1])
@@ -209,14 +210,13 @@ def plot_roc(y_pred_proba, y_test, unique_labels, name, binary, acc, run):
         auc = []
         real_values = []
         predictions = []
-        
         for i in range(len(y_pred_proba)):
             these_real_values = np.asarray(y_test[i])
             these_predictions = y_pred_proba[i][:, 1]
 
             # fpr, tpr, thresholds = roc_curve(these_real_values, np.asarray(raw_predictions[v]))
-            this_fpr, this_tpr, thresholds = roc_curve(these_real_values, 
-                                                       these_predictions, 
+            this_fpr, this_tpr, thresholds = roc_curve(these_real_values,
+                                                       these_predictions,
                                                        drop_intermediate=False
                                                        )
 
@@ -270,7 +270,7 @@ def plot_roc(y_pred_proba, y_test, unique_labels, name, binary, acc, run):
         calibration_curve(real_values, predictions, n_bins=20)
 
     plt.plot(mean_predicted_value, fraction_of_positives, "s-",
-                label="%s (%1.3f)" % (name, np.mean(acc)))
+             label="%s (%1.3f)" % (name, np.mean(acc)))
     # add perfect calibration line
     plt.plot([0, 1], [0, 1], "--", color='k', label='Perfect Calibration')
     fig.text(0.5, 0.04, 'Mean predicted probability', ha='center', va='center')
@@ -282,7 +282,7 @@ def plot_roc(y_pred_proba, y_test, unique_labels, name, binary, acc, run):
 
     fig, axs = plt.subplots(1, figsize=(8, 8), dpi=110)
     plt.hist(predictions, range=(0, 1), bins=10, label=group,
-                histtype="step", lw=2)
+             histtype="step", lw=2)
     fig.text(0.5, 0.04, 'Mean predicted probability', ha='center', va='center')
     fig.text(0.08, 0.5, "Count", ha='center', va='center', rotation='vertical')
     plt.title(name)
