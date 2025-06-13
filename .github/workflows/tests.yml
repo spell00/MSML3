@@ -33,8 +33,26 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+
+    - name: Setup Java and SQLite4Java
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y openjdk-8-jdk
+        cd msml/mzdb2tsv
+        wget https://repo1.maven.org/maven2/com/almworks/sqlite4java/libsqlite4java-linux-amd64/1.0.392/libsqlite4java-linux-amd64-1.0.392.so
+        wget https://repo1.maven.org/maven2/com/almworks/sqlite4java/sqlite4java/1.0.392/sqlite4java-1.0.392.jar
+        sudo cp libsqlite4java-linux-amd64-1.0.392.so /usr/lib/
+        sudo chmod +x libsqlite4java-linux-amd64-1.0.392.so
+        chmod +x libsqlite4java-linux-amd64-1.0.392.so
+        export LD_LIBRARY_PATH=/usr/lib:$(pwd):$LD_LIBRARY_PATH
+        export JAVA_OPTS="-Djava.library.path=/usr/lib:$(pwd)"
     
-    - name: Run tests
+    - name: Run mzdb2tsv tests
+      run: |
+        cd msml/tests/integration/mzdb2tsv
+        ./test_mzdb2tsv_ci.sh
+    
+    - name: Run Python tests
       run: |
         pytest -v -rs --cov=msml --cov-report=term --cov-report=xml:coverage.xml msml/tests/
     

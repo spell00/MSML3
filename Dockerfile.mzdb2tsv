@@ -1,38 +1,53 @@
 # TODO Dockerfile not up to date
 
 FROM ubuntu:20.04
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=America/Toronto
 
-# ADD mzdb2train.sh ./
+# Add msml directory
 ADD msml ./msml/
-#ADD ./mzdb2tsv.sh mzdb2tsv.sh
-RUN chmod +x msml/preprocess/mzdb2tsv.sh
-RUN chmod +x msml/mzdb2tsv/amm
-RUN chmod +x mzdb2tsv.sh
 
-# Install OpenJDK-8
+# Set permissions for executables
+RUN chmod +x msml/preprocess/mzdb2tsv.sh && \
+    chmod +x msml/mzdb2tsv/amm
+
+# Install OpenJDK-8 and other dependencies
 RUN apt-get update && \
-    apt-get install -y openjdk-8-jdk && \
-    apt-get install -y ant && \
-    apt-get install -y parallel && \
-    # apt-get install -y r-base && \
-    # apt-get install -y wget && \
-    apt-get clean;
-
-# Install other dependencies
-RUN apt-get install -y bc
-
-# Fix certificate issues
-RUN apt-get update && \
-    apt-get install ca-certificates-java && \
+    apt-get install -y \
+    openjdk-8-jdk \
+    ant \
+    parallel \
+    bc \
+    wget \
+    python3-pip \
+    python3-dev \
+    ca-certificates-java && \
     apt-get clean && \
-    update-ca-certificates -f;
+    update-ca-certificates -f
 
-# Setup JAVA_HOME -- useful for docker commandline
-ENV JAVA_HOME /usr/lib/jvm/java-8-openjdk-amd64/
-RUN export JAVA_HOME
+# Setup JAVA_HOME
+ENV JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64/
 
-RUN apt-get install -y python3-pip python3-dev \
-  && cd /usr/local/bin \
-  && ln -s /usr/bin/python3 python \
-  && pip3 install --upgrade pip 
-CMD bash ./mzdb2tsv.sh resources/mzdb
+# Install SQLite4Java native library
+RUN cd /usr/lib && \
+    wget https://repo1.maven.org/maven2/com/almworks/sqlite4java/libsqlite4java-linux-amd64/1.0.392/libsqlite4java-linux-amd64-1.0.392.so && \
+    chmod +x libsqlite4java-linux-amd64-1.0.392.so && \
+    cd /msml/mzdb2tsv && \
+    wget https://repo1.maven.org/maven2/com/almworks/sqlite4java/sqlite4java/1.0.392/sqlite4java-1.0.392.jar && \
+    cp /usr/lib/libsqlite4java-linux-amd64-1.0.392.so . && \
+    chmod +x libsqlite4java-linux-amd64-1.0.392.so
+
+# Set Java library path
+ENV LD_LIBRARY_PATH=/usr/lib:/msml/mzdb2tsv
+ENV JAVA_OPTS="-Djava.library.path=/usr/lib:/msml/mzdb2tsv"
+
+# Setup Python
+RUN cd /usr/local/bin && \
+    ln -s /usr/bin/python3 python && \
+    pip3 install --upgrade pip
+
+# Set working directory
+WORKDIR /msml
+
+# Default command
+CMD ["bash", "preprocess/mzdb2tsv.sh"]

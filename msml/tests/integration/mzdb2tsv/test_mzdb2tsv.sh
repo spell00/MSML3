@@ -22,7 +22,9 @@ echo $ORIGINAL_DIR
 bash msml/preprocess/mzdb2tsv.sh "$MZ_BIN" "$RT_BIN" "$SPD" "$MS_LEVEL" "$EXPERIMENT" "$SPLIT_DATA" "$TEST_DIR"
 
 # Check if output directories were created
-if [ ! -d "$TEST_DIR/test_experiment/tsv/mz$MZ_BIN/rt$RT_BIN/${SPD}spd/ms$MS_LEVEL/test" ]; then
+echo $(pwd)
+echo "$TEST_DIR/test_experiment/tsv/mz$MZ_BIN/rt$RT_BIN/${SPD}spd/ms$MS_LEVEL/all"
+if [ ! -d "$TEST_DIR/test_experiment/tsv/mz$MZ_BIN/rt$RT_BIN/${SPD}spd/ms$MS_LEVEL/all" ]; then
     echo "Test failed: Output directory was not created"
     exit 1
 fi
