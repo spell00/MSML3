@@ -19,4 +19,7 @@ pytest
 torch
 bernn
 
-# BERNN dependencies; should be installed with bernn
+# These are not actually used at the moment, but should either be introduced in pipeline
+# Or be removed
+tensorflow
+rpy2
