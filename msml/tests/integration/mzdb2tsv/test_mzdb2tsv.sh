@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Test setup
-TEST_DIR='resources/test_files'
+TEST_DIR='test_resources'
 
 # Test variables
 MZ_BIN=10
@@ -9,16 +9,16 @@ RT_BIN=10
 SPD=200
 MS_LEVEL=2
 EXPERIMENT="test_experiment"
-SPLIT_DATA=1
+SPLIT_DATA=0
 
 # Store original directory
 ORIGINAL_DIR=$(pwd)
-
+echo $ORIGINAL_DIR
 # Change to mzdb2tsv directory
 # cd msml/mzdb2tsv || exit 1
 
 # Run the script
-echo msml/preprocess/mzdb2tsv.sh "$MZ_BIN" "$RT_BIN" "$SPD" "$MS_LEVEL" "$EXPERIMENT" "$SPLIT_DATA" "$TEST_DIR"
+# echo msml/preprocess/mzdb2tsv.sh "$MZ_BIN" "$RT_BIN" "$SPD" "$MS_LEVEL" "$EXPERIMENT" "$SPLIT_DATA" "$TEST_DIR"
 bash msml/preprocess/mzdb2tsv.sh "$MZ_BIN" "$RT_BIN" "$SPD" "$MS_LEVEL" "$EXPERIMENT" "$SPLIT_DATA" "$TEST_DIR"
 
 # Check if output directories were created
@@ -34,6 +34,5 @@ if [ "$TSV_COUNT" -eq 0 ]; then
     exit 1
 fi
 
-echo "All tests passed!"
-echo $(pwd)
+echo "All tests passed!"echo $(pwd)
 # cd ../..
