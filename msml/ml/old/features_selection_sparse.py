@@ -8,8 +8,6 @@ import pandas as pd
 from sklearn.feature_selection import mutual_info_classif, f_classif, VarianceThreshold
 from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold
 
-from scipy.sparse import csc_matrix
-
 def get_feature_selection_method(model_name):
     if model_name == 'mutual_info_classif':
         model = mutual_info_classif

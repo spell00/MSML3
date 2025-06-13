@@ -7,7 +7,6 @@ Author: Simon Pelletier
 
 from datetime import datetime
 
-start_time = datetime.now()
 # import re
 import os
 import time
@@ -26,18 +25,18 @@ from tqdm import tqdm
 # import nibabel as nib
 import warnings
 # import queue
-from features_selection import get_feature_selection_method
-from features_selection_sparse import keep_only_not_zeros_sparse, keep_not_zeros_sparse, \
+from msml.preprocess.to_delete.features_selection import get_feature_selection_method
+from msml.preprocess.to_delete.features_selection_sparse import keep_only_not_zeros_sparse, keep_not_zeros_sparse, \
     process_sparse_data, count_array, make_lists, split_sparse, MultiKeepNotFunctionsSparse, \
     process_sparse_data_supervised
 from scipy.signal import find_peaks
 from statsmodels.nonparametric.smoothers_lowess import lowess
 from msalign import msalign
-from functools import reduce
-from sklearn.preprocessing import minmax_scale as scale
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(filename='make_tensors_ms1.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
+
+start_time = datetime.now()
 
 
 class MakeTensorsMultiprocess:

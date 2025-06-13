@@ -11,8 +11,9 @@ import copy
 import torch.nn.functional as F
 from scipy.stats import zscore
 # split_sparse
-from features_selection_sparse import split_sparse, MultiKeepNotFunctionsSparse, keep_not_zeros_sparse
+from msml.ml.old.features_selection_sparse import split_sparse, MultiKeepNotFunctionsSparse, keep_not_zeros_sparse
 import multiprocessing
+
 
 def augment_data(X_train, n_aug, p=0, g=0):
     torch.manual_seed(42)
@@ -45,6 +46,7 @@ def augment_data(X_train, n_aug, p=0, g=0):
         X_train2 = pd.DataFrame(X_train2, columns=columns, index=train_indices)
 
     return X_train2
+
 
 def augment_data2(X_train, n_aug, p=0, g=0):
     torch.manual_seed(42)

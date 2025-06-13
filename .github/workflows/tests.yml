@@ -1,0 +1,45 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.10]
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install R
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y r-base r-base-dev
+        sudo R -e "install.packages('BiocManager')"
+        sudo R -e "BiocManager::install(c('xcms', 'faahKO', 'MsExperiment', 'SummarizedExperiment', 'sva', 'harmony', 'zinbwave'))"
+        sudo R -e "install.packages(c('RColorBrewer', 'pander', 'pheatmap', 'ragg', 'pkgdown', 'devtools', 'ica', 'Rcpm', 'rliger', 'scMerge', 'lisi', 'kBET'))"
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run tests
+      run: |
+        pytest -v -rs --cov=msml --cov-report=term --cov-report=xml:coverage.xml msml/tests/
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        fail_ci_if_error: true 

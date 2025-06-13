@@ -7,7 +7,6 @@ Author: Simon Pelletier
 
 from datetime import datetime
 
-start_time = datetime.now()
 # import re
 import os
 import time
@@ -21,24 +20,23 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
 from PIL import Image
 from matplotlib import cm
 from pickle import dump, load
-from scipy.sparse import csr_matrix, vstack, hstack, csc_matrix
+from scipy.sparse import vstack, hstack, csc_matrix
 from tqdm import tqdm
-# import nibabel as nib
 import warnings
-# import queue
-from features_selection import get_feature_selection_method
-from features_selection_sparse import keep_only_not_zeros_sparse, keep_not_zeros_sparse, \
+from .old.features_selection import get_feature_selection_method
+from .old.features_selection_sparse import keep_only_not_zeros_sparse, keep_not_zeros_sparse, \
     process_sparse_data, count_array, split_sparse, MultiKeepNotFunctionsSparse, \
     process_sparse_data_supervised, make_lists
 from scipy.signal import find_peaks
 from statsmodels.nonparametric.smoothers_lowess import lowess
 from msalign import msalign
 from functools import reduce
-from sklearn.preprocessing import minmax_scale as scale
-from utils import crop_data, adjust_tensors, delete_rows_csr
+from .utils import crop_data, adjust_tensors, delete_rows_csr
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(filename='make_tensors_ms2.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
+
+start_time = datetime.now()
 
 
 class MakeTensorsMultiprocess:
@@ -154,7 +152,9 @@ class MakeTensorsMultiprocess:
                     tmp_rt -= self.bins['rt_bin_post'] / 2
                 rt = tmp_rt
             elif self.bins['rt_bin_post'] != self.bins['rt_bin']:
-                rt = np.round(np.round(rt / self.bins['rt_bin_post'], 8), self.bins['rt_bin_post']) * self.bins['rt_bin_post']
+                rt = np.round(
+                    np.round(rt / self.bins['rt_bin_post'], 8), self.bins['rt_bin_post']
+                ) * self.bins['rt_bin_post']
 
             if self.bins['mz_shift']:
                 tmp_mz = np.floor(np.round(mz / self.bins['mz_bin_post'], 8)) * self.bins['mz_bin_post']
@@ -164,7 +164,9 @@ class MakeTensorsMultiprocess:
                     tmp_mz -= self.bins['mz_bin_post'] / 2
                 mz = tmp_mz
             elif self.bins['mz_bin_post'] != self.bins['mz_bin']:
-                mz = np.round(np.round(mz / self.bins['mz_bin_post'], 8), self.bins['mz_bin_post']) * self.bins['mz_bin_post']
+                mz = np.round(
+                    np.round(mz / self.bins['mz_bin_post'], 8), self.bins['mz_bin_post']
+                ) * self.bins['mz_bin_post']
             if self.bins['rt_rounding'] != 0:
                 rt = np.round(rt, self.bins['rt_rounding'])
             if self.bins['mz_rounding'] != 0:
@@ -173,10 +175,10 @@ class MakeTensorsMultiprocess:
             mz = np.round(float(mz), self.bins['mz_rounding'])
             rt = np.round(float(rt), self.bins['rt_rounding'])
             # if self.is_sparse and prev_mz != rt:
-                # Change todense on mz rather than rt
-                # if prev_mz != -1:
-                #     final[min_parent] = final[min_parent].astype(spdtypes)
-                # final[min_parent] = final[min_parent].sparse.to_dense()
+            # Change todense on mz rather than rt
+            # if prev_mz != -1:
+            #     final[min_parent] = final[min_parent].astype(spdtypes)
+            # final[min_parent] = final[min_parent].sparse.to_dense()
             if self.log2 == 'inloop':
                 try:
                     final[min_parent].loc[mz].loc[rt] += np.log1p(intensity)
@@ -201,7 +203,9 @@ class MakeTensorsMultiprocess:
                 for ii, line1 in enumerate(final[df].values):
                     mask = find_peaks(final[df].iloc[ii], height=0.1, distance=2)
                     # Make all values 0 except the ones that are in mask
-                    final[df].iloc[ii] = pd.Series([final[df].iloc[ii].values[i] if i in mask[0] else 0 for i in range(len(final[df].iloc[ii]))])
+                    final[df].iloc[ii] = pd.Series(
+                        [final[df].iloc[ii].values[i] if i in mask[0] else 0 for i in range(len(final[df].iloc[ii]))]
+                    )
         # os.makedirs(f"{self.path}/nibabel/", exist_ok=True)
         if self.args.save:
             # img = nib.Nifti1Image(np.stack(list(final.values())), np.eye(4))
@@ -211,12 +215,16 @@ class MakeTensorsMultiprocess:
             # df = df / df.max(axis=(1, 2), keepdims=True)
             df = df / df.max()
             if self.args.save3d:
-                _ = [self.save_images_and_csv3d(matrix, df[i], f"{label}", min_parent) for i, (min_parent, matrix) in
-                    enumerate(zip(final, list(final.values())))]
-            
+                _ = [self.save_images_and_csv3d(
+                    matrix, df[i], f"{label}", min_parent) for i, (min_parent, matrix) in enumerate(
+                        zip(final, list(final.values()))
+                    )]
+
             df = df.sum(0)
             df = df / df.max()
-            _ = self.save_images_and_csv(reduce(lambda x, y: x.astype(float).add(y.astype(float)), final.values()), df, label)
+            _ = self.save_images_and_csv(
+                reduce(lambda x, y: x.astype(float).add(y.astype(float)), final.values()), df, label
+            )
             # del img
         # df = np.stack(list(final.values()))
         # for x in list(final.keys()):
@@ -252,13 +260,15 @@ class MakeTensorsMultiprocess:
         im.close()
         del im
 
+
 def round_data(data_matrix, pool_data, n_cpus, dframe_list, decimals=4):
     # Round values to 2 decimals
     data_matrix = np.round(np.nan_to_num(data_matrix), decimals)
     pool_data = np.round(np.nan_to_num(pool_data), decimals)
 
     pool = multiprocessing.Pool(int(n_cpus), maxtasksperchild=1)
-    fun = MultiKeepNotFunctionsSparse(keep_only_not_zeros_sparse, data=dframe_list[0], cols=dframe_list[1], nums=dframe_list[2],
+    fun = MultiKeepNotFunctionsSparse(keep_only_not_zeros_sparse, data=dframe_list[0],
+                                      cols=dframe_list[1], nums=dframe_list[2],
                                       threshold=0, n_processes=np.ceil(data_matrix.shape[1] / int(1e5)))
     notzeros = pool.map(fun.process, range(len(dframe_list[0])))
 
@@ -274,8 +284,9 @@ def round_data(data_matrix, pool_data, n_cpus, dframe_list, decimals=4):
     except AssertionError:
         print('Not all columns are 0')
         # exit()
-    print('\Final data shape', data.shape)
+    print('Final data shape', data.shape)
     return data_matrix, pool_data, new_columns
+
 
 def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
     """
@@ -388,9 +399,9 @@ def make_df(dirinput, dirname, bins, args_dict, names_to_keep=None):
     rts = [np.round(rt * args_dict.rt_bin_post, args_dict.rt_rounding) - rt_shift for rt in range(max_rt)]
     mz_min_parents = np.arange(min(parents), max(parents) + diff_parents, diff_parents)
 
-    return matrices, new_labels, [f"{mz_min_parent}_{rt}_{mz}" for mz_min_parent in mz_min_parents for rt in rts for mz
-                                   in mzs], {'parents': parents, 'max_rt': max_rt, 'max_mz': max_mz}
-   
+    return matrices, new_labels, \
+        [f"{mz_min_parent}_{rt}_{mz}" for mz_min_parent in mz_min_parents for rt in rts for mz in mzs], \
+        {'parents': parents, 'max_rt': max_rt, 'max_mz': max_mz}
 
 
 if __name__ == "__main__":
@@ -477,7 +488,6 @@ if __name__ == "__main__":
     if args.test_run:
         args.run_name = 'test'
 
-
     bins = {
         'mz_bin_post': args.mz_bin_post,
         'rt_bin_post': args.rt_bin_post,
@@ -495,7 +505,7 @@ if __name__ == "__main__":
     dir_name = f"{script_dir}/{out_dest}/mz{args.mz_bin}/rt{args.rt_bin}/mzp{args.mz_bin_post}/" \
                f"rtp{args.rt_bin_post}/thr{args.threshold}/{args.spd}spd/ms2/combat{args.combat_corr}/" \
                f"shift{args.shift}/{args.scaler}/log{args.log2}/{args.feature_selection}/"
-    
+
     batches = [
         "BPatients-03-14-2025", "B15-06-29-2024",
         "B14-06-10-2024", "B13-06-05-2024", "B12-05-31-2024",
@@ -516,7 +526,8 @@ if __name__ == "__main__":
 
     cropings = f"mz{args.min_mz}-{args.max_mz}rt{args.min_rt}-{args.max_rt}"
 
-    args.run_name = f"{args.run_name}_{'-'.join([b.split('-')[0] for b in batches])}_gkf{args.groupkfold}_{cropings}_{args.n_splits}splits"
+    args.run_name = f"{args.run_name}_{'-'.join([b.split('-')[0] for b in batches])}" \
+        f"_gkf{args.groupkfold}_{cropings}_{args.n_splits}splits"
     matrix_filename = f'{dir_name}/{args.run_name}/data_matrix_tmp.pkl'
     columns_filename = f'{dir_name}/{args.run_name}/columns.pkl'
     columns_filename_no_zeros = f'{dir_name}/{args.run_name}/columns_nozeros.pkl'
@@ -542,7 +553,7 @@ if __name__ == "__main__":
         parents = np.unique(np.concatenate(parents))
         max_features = {
             'parents': len(parents),
-            'max_rt': max(max_rts), 
+            'max_rt': max(max_rts),
             'max_mz': max(max_mzs)
         }
         rts = [np.round(rt * args.rt_bin_post, args.rt_rounding) for rt in range(max_features['max_rt'])]
@@ -568,9 +579,9 @@ if __name__ == "__main__":
         columns = load(open(columns_filename, 'rb'))
         labels = load(open(labels_filename, 'rb'))
     print("Finding not zeros only columns...")
-    print('\nComplete data shape', data_matrix.shape)    
+    print('\nComplete data shape', data_matrix.shape)
 
-    # TODO only pass and return a list of list of columns. 
+    # TODO only pass and return a list of list of columns.
     # TODO data_matrix could be seperated without taking more space
     # TODO now the space doubles here
     dframe_list = split_sparse(data_matrix, cols_per_split=int(1e5), columns=columns)
@@ -582,10 +593,12 @@ if __name__ == "__main__":
         assert len(dframe_list[0]) == len(dframe_list[1])
     except AssertionError:
         print(len(dframe_list[0]), len(dframe_list[1]))
-        exit('Columns and dataframes are not the same length') 
+        exit('Columns and dataframes are not the same length')
 
-    fun = MultiKeepNotFunctionsSparse(keep_only_not_zeros_sparse, data=dframe_list[0], cols=dframe_list[1], nums=dframe_list[2],
-                                      threshold=0, n_processes=np.ceil(data_matrix.shape[1] / int(1e5)))
+    fun = MultiKeepNotFunctionsSparse(
+        keep_only_not_zeros_sparse, data=dframe_list[0], cols=dframe_list[1], nums=dframe_list[2],
+        threshold=0, n_processes=np.ceil(data_matrix.shape[1] / int(1e5))
+    )
     notzeros = pool.map(fun.process, range(len(dframe_list[0])))
 
     new_columns = np.array([x for x in np.concatenate([x[0] for x in notzeros])])
@@ -609,8 +622,9 @@ if __name__ == "__main__":
     # if n_cpus > len(dframe_list):
     #     n_cpus = len(dframe_list)
     pool = multiprocessing.Pool(int(n_cpus), maxtasksperchild=1)
-    fun = MultiKeepNotFunctionsSparse(keep_not_zeros_sparse, data=dframe_list[0], cols=dframe_list[1], nums=dframe_list[2],
-                                       threshold=args.threshold, n_processes=np.ceil(data_matrix.shape[1] / int(1e4)))
+    fun = MultiKeepNotFunctionsSparse(keep_not_zeros_sparse, data=dframe_list[0], cols=dframe_list[1],
+                                      nums=dframe_list[2], threshold=args.threshold,
+                                      n_processes=np.ceil(data_matrix.shape[1] / int(1e4)))
     notzeros = pool.map(fun.process, range(len(dframe_list[0])))
     new_columns = np.array([x for x in np.concatenate([x[0] for x in notzeros])])
     not_zeros_col = np.array([x for x in np.concatenate([x[1] for x in notzeros])])
@@ -703,7 +717,7 @@ if __name__ == "__main__":
         else:
             features = pd.read_csv(args.mutual_info_path)['minp_maxp_rt_mz'].to_numpy()
 
-        feats_pos = [np.argwhere(x==columns)[0][0] for x in features if x in columns]
+        feats_pos = [np.argwhere(x == columns)[0][0] for x in features if x in columns]
         data = data[:, feats_pos]
         pool_data = pool_data[:, feats_pos]
     else:
@@ -716,7 +730,7 @@ if __name__ == "__main__":
         features = features.index
 
     dframe_list = split_sparse(data, cols_per_split=int(1e4), columns=new_columns)
-    
+
     if args.decimals > 0:
         data, pool_data, new_columns = round_data(data, pool_data, n_cpus, dframe_list, decimals=args.decimals)
     dump(new_columns, open(columns_filename_no_zeros, 'wb'))
@@ -739,7 +753,9 @@ if __name__ == "__main__":
     pool_infos.index = pool_labels
     if len(pool_infos.index) > 0:
         pool_infos.columns = ['label', 'batch']
-        pool_data = pd.concat([pool_infos, pd.DataFrame(pool_data.toarray(), index=pool_labels, columns=features)], axis=1)
+        pool_data = pd.concat([
+            pool_infos, pd.DataFrame(pool_data.toarray(), index=pool_labels, columns=features)
+        ], axis=1)
         pool_data.to_csv(
             f'{dir_name}/{args.run_name}/pool_inputs_{args.feature_selection}.csv',
             index=True, index_label='ID')
@@ -749,4 +765,3 @@ if __name__ == "__main__":
         f'{dir_name}/{args.run_name}/inputs_{args.feature_selection}.csv',
         index=True, index_label='ID')
     print('Duration: {}'.format(datetime.now() - start_time))
-

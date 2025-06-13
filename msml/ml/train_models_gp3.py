@@ -13,10 +13,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.decomposition import PCA
 import pandas as pd
-from dataset import get_data_all
+from .dataset import get_data_all
 from sklearn.naive_bayes import GaussianNB
-from train_xgboost import Train_xgboost
-from train_bernn import Train_bernn
+from .train_xgboost import Train_xgboost
+from .train_bernn import Train_bernn
 from bernn import TrainAEClassifierHoldout
 
 NEPTUNE_API_TOKEN = os.environ.get('NEPTUNE_API_TOKEN')

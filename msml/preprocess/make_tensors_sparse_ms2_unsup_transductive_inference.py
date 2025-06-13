@@ -7,7 +7,6 @@ Author: Simon Pelletier
 
 from datetime import datetime
 
-start_time = datetime.now()
 # import re
 import os
 import time
@@ -26,7 +25,7 @@ from tqdm import tqdm
 # import nibabel as nib
 import warnings
 # import queue
-from features_selection_sparse import count_array, make_lists
+from msml.preprocess.to_delete.features_selection_sparse import count_array, make_lists
 from scipy.signal import find_peaks
 from statsmodels.nonparametric.smoothers_lowess import lowess
 from msalign import msalign
@@ -42,6 +41,7 @@ logging.basicConfig(filename='make_tensors_ms2.log', filemode='w', format='%(nam
 
 GLOBAL_TIMES = csv.writer(open('global_times.csv', 'w'))
 
+start_time = datetime.now()
 
 class MakeTensorsMultiprocess:
     """

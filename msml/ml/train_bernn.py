@@ -12,7 +12,7 @@ from sklearn_train_nocv import get_confusion_matrix, plot_roc
 from sklearn.metrics import matthews_corrcoef as MCC
 from sklearn.metrics import accuracy_score as ACC
 from log_shap import log_shap
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 # import pipeline from sklearn
 from utils import columns_stats_over0
 import sys
@@ -20,7 +20,7 @@ from bernn.dl.train.train_ae import TrainAE
 from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold
 # import xgboost
 from bernn.dl.train.pytorch.utils.dataset import get_loaders_bacteria
-from bernn.ml.train.params_gp import linsvc_space
+# from bernn.ml.train.params_gp import linsvc_space
 from bernn.dl.train.train_ae_classifier_holdout import log_num_neurons
 # from bernn.utils.utils import scale_data
 from bernn.dl.train.pytorch.utils.utils import get_optimizer, get_empty_dicts, get_empty_traces, \

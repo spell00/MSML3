@@ -1,9 +1,3 @@
-# NEPTUNE_API_TOKEN = os.environ.get('NEPTUNE_API_TOKEN')
-# NEPTUNE_PROJECT_NAME = "Bacteria-MSMS"
-# NEPTUNE_MODEL_NAME = 'BAC-'
-NEPTUNE_API_TOKEN = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJlZjRiZGUzYS1kNTJmLTRkNGItOWU1MS1iNDU3MGE1NjAyODAifQ=="
-NEPTUNE_PROJECT_NAME = "MSML-Bacteria"
-NEPTUNE_MODEL_NAME = 'MSMLBAC-'
 import copy
 import json
 import os
@@ -11,21 +5,21 @@ import neptune
 import pickle
 import numpy as np
 import pandas as pd
-from utils import remove_zero_cols, scale_data, augment_data, get_empty_lists
-from loggings import log_ord, log_fct, save_confusion_matrix, log_neptune, plot_bars
+from utils import scale_data, get_empty_lists
+from loggings import log_ord, log_fct, save_confusion_matrix, log_neptune
 from sklearn_train_nocv import get_confusion_matrix, plot_roc
-from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold
-from sklearn.multiclass import OneVsRestClassifier
 # import mattews correlation from sklearn
 from sklearn.metrics import matthews_corrcoef as MCC
 from sklearn.metrics import accuracy_score as ACC
 from scipy import stats
-from log_shap import log_shap
 import xgboost
 import matplotlib.pyplot as plt
-import time
-from tqdm import tqdm
 from utils import columns_stats_0, columns_stats_over0
+
+NEPTUNE_API_TOKEN = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJlZjRiZGUzYS1kNTJmLTRkNGItOWU1MS1iNDU3MGE1NjAyODAifQ=="
+NEPTUNE_PROJECT_NAME = "MSML-Bacteria"
+NEPTUNE_MODEL_NAME = 'MSMLBAC-'
+
 
 class Infer:
     def __init__(self, name, model, data, uniques,
@@ -720,7 +714,6 @@ class Infer:
         # self.save_thresholds_curve('test', lists, run)
         self.save_thresholds_curve0('test', df_test, run)
         # plot_bars(self.args, run, self.unique_labels)
-        
 
     def save_result_df(self, lists, run):
         if len(lists['proba']['test']) > 0:
@@ -757,7 +750,6 @@ class Infer:
         # self.save_thresholds_curve('test', lists, run)
         self.save_thresholds_curve0('test', df_test, run)
         # plot_bars(self.args, run, self.unique_labels)
-        
 
     def save_roc_curves(self, lists, run):
         try:
@@ -791,7 +783,7 @@ class Infer:
         # plt.xlim(0, 9)
         fig.savefig(f'{self.log_path}/ROC/{self.name}_{self.args.model_name}_{group}_thresholds.png')
         run[f'{group}/thresholds'].upload(f'{self.log_path}/ROC/{self.name}_{self.args.model_name}_{group}_thresholds.png')
-        
+
     def save_thresholds_curve(self, group, lists, run):
         thresholds = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
         accs = {x: [] for x in thresholds}
@@ -870,7 +862,6 @@ class Infer:
         )
         plt.close(fig)
 
-        
     def save_confusion_matrices(self, lists, run):
         relevant_samples = []
         if len(relevant_samples) > 0:
@@ -889,6 +880,4 @@ class Infer:
 
 
         return lists
-
-
 

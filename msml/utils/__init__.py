@@ -1,10 +1,8 @@
-import matplotlib.pyplot as plt
 import numpy as np
-import itertools
-
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler, Normalizer
 from sklearn.pipeline import Pipeline
+
 
 def scale_data(scale, data, device='cpu'):
     unique_batches = np.unique(data['batches']['all'])
@@ -238,5 +236,3 @@ def scale_data(scale, data, device='cpu'):
     #         data['inputs'][group] = pd.DataFrame(data['inputs'][group], columns=columns, index=indices)
 
     return data, scaler
-
-

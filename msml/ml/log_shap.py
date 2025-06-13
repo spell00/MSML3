@@ -1,5 +1,4 @@
 import os
-import torch
 import shap
 import numpy as np
 import pandas as pd
@@ -9,7 +8,7 @@ import matplotlib.cm as cm
 from PIL import Image
 # import StratifiedShuffleSplit\
 from sklearn.model_selection import StratifiedShuffleSplit
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+
 
 def interactions_mean_matrix(shap_interactions, X, run, group):
     # Get absolute mean of matrices

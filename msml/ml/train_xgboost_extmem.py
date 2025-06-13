@@ -1,9 +1,3 @@
-# NEPTUNE_API_TOKEN = os.environ.get('NEPTUNE_API_TOKEN')
-# NEPTUNE_PROJECT_NAME = "Bacteria-MSMS"
-# NEPTUNE_MODEL_NAME = 'BAC-'
-NEPTUNE_API_TOKEN = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJlZjRiZGUzYS1kNTJmLTRkNGItOWU1MS1iNDU3MGE1NjAyODAifQ=="
-NEPTUNE_PROJECT_NAME = "MSML-Bacteria"
-NEPTUNE_MODEL_NAME = 'MSMLBAC-'
 import copy
 import json
 import os
@@ -24,11 +18,14 @@ from log_shap import log_shap
 import xgboost
 import matplotlib.pyplot as plt
 # import pipeline from sklearn
-from sklearn.pipeline import Pipeline
 from utils import columns_stats_over0
 
 import sys
 # import cupy
+
+NEPTUNE_API_TOKEN = "eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiJlZjRiZGUzYS1kNTJmLTRkNGItOWU1MS1iNDU3MGE1NjAyODAifQ=="
+NEPTUNE_PROJECT_NAME = "MSML-Bacteria"
+NEPTUNE_MODEL_NAME = 'MSMLBAC-'
 
 def get_size_in_mb(obj):
     size_in_bytes = sys.getsizeof(obj)
