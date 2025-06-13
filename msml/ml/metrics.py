@@ -6,6 +6,7 @@ from rpy2.robjects import pandas2ri
 from rpy2.robjects.packages import importr
 from rpy2.robjects.conversion import localconverter
 
+
 def rLISI(data, meta_data, perplexity=10):
     lisi = importr('lisi')
     # all_batches_r = robjects.IntVector(all_batches[all_ranks])

@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import copy
 import matplotlib.pyplot as plt
-from matplotlib import rcParams, cycler
+from matplotlib import rcParams
 # robjects
 from rpy2.robjects import pandas2ri
 from rpy2.robjects import r as robjects

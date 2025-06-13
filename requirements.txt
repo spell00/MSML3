@@ -16,3 +16,7 @@ bernn
 numpy
 optuna
 pytest
+torch
+bernn
+
+# BERNN dependencies; should be installed with bernn

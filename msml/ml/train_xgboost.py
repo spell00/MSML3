@@ -4,16 +4,17 @@ import neptune
 import pickle
 import numpy as np
 import pandas as pd
-from utils import remove_zero_cols, scale_data, augment_data, get_empty_lists
-from loggings import log_ord, log_fct, log_neptune
+from .utils import remove_zero_cols, scale_data, get_empty_lists
+from .torch_utils import augment_data
+from .loggings import log_ord, log_fct, log_neptune
 from sklearn.metrics import matthews_corrcoef as MCC
 from sklearn.metrics import accuracy_score as ACC
 # from scipy import stats
-from log_shap import log_shap
+from .log_shap import log_shap
 import xgboost
 # import pipeline from sklearn
-from utils import columns_stats_over0
-from train import Train
+from .utils import columns_stats_over0
+from .train import Train
 
 import sys
 

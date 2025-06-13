@@ -25,11 +25,11 @@ COPY requirements.txt requirements-dev.txt pytest.ini /app/
 COPY setup.py /app/
 
 # Install both production and development dependencies
+ENV R_HOME=/usr/lib/R
 RUN pip install -r /app/requirements.txt && \
     pip install -r /app/requirements-dev.txt && \
     pip install -e .
 
-ENV R_HOME=/usr/lib/R
 ENV LD_LIBRARY_PATH=/usr/lib/R/lib:${LD_LIBRARY_PATH}
 ENV PYTHONPATH=/app:${PYTHONPATH}
 

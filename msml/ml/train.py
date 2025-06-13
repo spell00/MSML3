@@ -6,16 +6,17 @@ from sklearn.calibration import calibration_curve
 import pickle
 import numpy as np
 import pandas as pd
-from utils import remove_zero_cols, scale_data, augment_data, get_empty_lists
-from loggings import log_ord, log_fct, save_confusion_matrix, log_neptune, plot_bars
-from sklearn_train_nocv import get_confusion_matrix, plot_roc
+from .utils import remove_zero_cols, scale_data, get_empty_lists
+from .torch_utils import augment_data
+from .loggings import log_ord, log_fct, save_confusion_matrix, log_neptune, plot_bars
+from .sklearn_train_nocv import get_confusion_matrix, plot_roc
 from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold
 # from sklearn.multiclass import OneVsRestClassifier
 # import mattews correlation from sklearn
 from sklearn.metrics import matthews_corrcoef as MCC
 from sklearn.metrics import accuracy_score as ACC
 # from scipy import stats
-from log_shap import log_shap
+from .log_shap import log_shap
 import xgboost
 import matplotlib.pyplot as plt
 # import pipeline from sklearn
