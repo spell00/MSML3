@@ -2,6 +2,7 @@ import os
 import xgboost
 import numpy as np
 import random
+import torch
 import sklearn.neighbors
 import sklearn
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
@@ -18,6 +19,7 @@ from sklearn.naive_bayes import GaussianNB
 from .train_xgboost import Train_xgboost
 from .train_bernn import Train_bernn
 from bernn import TrainAEClassifierHoldout
+from msml.ml.models.train_lsm import TrainLSM
 
 NEPTUNE_API_TOKEN = os.environ.get('NEPTUNE_API_TOKEN')
 NEPTUNE_PROJECT_NAME = "MSML-Bacteria"
@@ -26,8 +28,12 @@ NEPTUNE_MODEL_NAME = 'MSMLBAC-'
 warnings.filterwarnings("ignore")
 
 random.seed(42)
-# torch.manual_seed(42)
 np.random.seed(42)
+torch.manual_seed(42)
+torch.cuda.manual_seed_all(42)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+torch.set_default_dtype(torch.float32)
 
 
 # Exploratory Data Analysis (EDA)
@@ -181,7 +187,7 @@ def perform_eda(data, path):
     })
 
     # Filter to exclude exact zeros for meaningful distribution visualization
-    nonzero_df = df[df["Type"] == "Non-Zero"]
+    # nonzero_df = df[df["Type"] == "Non-Zero"]
 
     # Boxplot
     plt.figure(figsize=(6, 4))
@@ -299,15 +305,27 @@ def create_objective(train, args):
             }
         elif args.model_name == 'xgboost':
             print('XGBOOST')
-            params = {
-                'threshold': trial.suggest_float('threshold', 0.0, 0.5),
-                'p': trial.suggest_float('p', 0.0, 0.5),
-                'g': trial.suggest_float('g', 0.0, 0.5),
-                'max_depth': trial.suggest_int('max_depth', 4, 5),
-                'early_stopping_rounds': trial.suggest_float('early_stopping_rounds', 10, 20),
-                'n_estimators': trial.suggest_int('n_estimators', 100, 1000),
-                'scaler': trial.suggest_categorical("scaler", ['zscore', 'minmax2']),
-            }
+            if args.n_features == -1:
+                params = {
+                    'threshold': trial.suggest_float('threshold', 0.0, 0.5),
+                    'p': trial.suggest_float('p', 0.0, 0.5),
+                    'g': trial.suggest_float('g', 0.0, 0.5),
+                    'max_depth': trial.suggest_int('max_depth', 4, 5),
+                    'early_stopping_rounds': trial.suggest_float('early_stopping_rounds', 10, 20),
+                    'n_estimators': trial.suggest_int('n_estimators', 1, 1000),
+                    'scaler': trial.suggest_categorical("scaler", ['zscore', 'minmax']),
+                }
+            else:
+                params = {
+                    'threshold': trial.suggest_float('threshold', 0.0, 0.5),
+                    'p': trial.suggest_float('p', 0.0, 0.5),
+                    'g': trial.suggest_float('g', 0.0, 0.5),
+                    'max_depth': trial.suggest_int('max_depth', 4, 5),
+                    'early_stopping_rounds': trial.suggest_float('early_stopping_rounds', 10, 20),
+                    'n_estimators': trial.suggest_int('n_estimators', 1, 2),
+                    'scaler': trial.suggest_categorical("scaler", ['minmax', 'minmax2', 'robust', 'standard', 'minmax_per_batch', 'standard_per_batch', 'robust_per_batch']),
+                }
+
         elif args.model_name == 'bernn':
             print(f'BERNN: {args.dloss}')
             if args.n_features == 100:
@@ -323,11 +341,11 @@ def create_objective(train, args):
                     'smoothing': trial.suggest_float('smoothing', 0.0, 0.2),
                     'dropout': trial.suggest_float('dropout', 0.0, 0.5),
                     'nu': trial.suggest_float('nu', 1e-4, 1e2),
-                    'lr': trial.suggest_float('lr', 1e-4, 1e-2),
+                    'lr': trial.suggest_float('lr', 1e-4, 1e-3),
                     'wd': trial.suggest_float('wd', 1e-8, 1e-5),
                     'scaler': trial.suggest_categorical("scaler", ['minmax']),
-                    'gamma': trial.suggest_float('gamma', 1e-2, 1e2),
-                    'warmup': trial.suggest_int('warmup', 1, 2),
+                    'gamma': trial.suggest_float('gamma', 1e-3, 1e-1),
+                    'warmup': trial.suggest_int('warmup', 1, 100),
                     # 'beta': trial.suggest_float('beta', 1e-2, 1e2),
                     # 'zeta': trial.suggest_float('zeta', 1e-2, 1e2),
                     'reg_entropy': trial.suggest_float('reg_entropy', 1e-8, 1e-2),
@@ -361,28 +379,38 @@ def create_objective(train, args):
             else:
                 params = {
                     'threshold': trial.suggest_float('threshold', 0.0, 0.5),
-                    'p': trial.suggest_float('p', 0.0, 0.5),
-                    'g': trial.suggest_float('g', 0.0, 0.5),
-                    'layer1': trial.suggest_int('layer1', 1000, 10000),
-                    # 'layer2': trial.suggest_int('layer2', 1024, 2048),
-                    # 'layer3': trial.suggest_int('layer3', 512, 1024),
-                    # 'layer4': trial.suggest_int('layer4', 256, 512),
+                    # 'p': trial.suggest_float('p', 0.0, 0.5),
+                    # 'g': trial.suggest_float('g', 0.0, 0.5),
                     'margin': trial.suggest_float('margin', 0.0, 0.2),
                     'smoothing': trial.suggest_float('smoothing', 0.0, 0.2),
                     'dropout': trial.suggest_float('dropout', 0.0, 0.5),
-                    'nu': trial.suggest_float('nu', 1e-4, 1e2),
-                    'lr': trial.suggest_float('lr', 1e-5, 1e-2),
-                    'wd': trial.suggest_float('wd', 1e-8, 1e-5),
-                    'scaler': trial.suggest_categorical("scaler", ['minmax', 'minmax2', 'zscore']),
-                    'gamma': trial.suggest_float('gamma', 1e-2, 1e2),
-                    'warmup': trial.suggest_int('warmup', 1, 250),
-                    # 'beta': trial.suggest_float('beta', 1e-2, 1e2),
-                    # 'zeta': trial.suggest_float('zeta', 1e-2, 1e2),
-                    'reg_entropy': trial.suggest_float('reg_entropy', 1e-8, 1e-2),
+                    'nu': trial.suggest_float('nu', 1e-2, 1e2, log=True),
+                    'lr': trial.suggest_float('lr', 1e-4, 1e-1, log=True),
+                    'wd': trial.suggest_float('wd', 1e-8, 1e-5, log=True),
+                    'scaler': trial.suggest_categorical("scaler", ['minmax', 'robust', 'standard', 'minmax_per_batch', 'standard_per_batch', 'robust_per_batch']),
+                    'warmup': trial.suggest_int('warmup', 10, args.max_warmup, log=True),
+                    # 'reg_entropy': trial.suggest_float('reg_entropy', 1e-8, 1e-2),
                     'l1': trial.suggest_float('l1', 1e-8, 1e-5),
-                    'prune_threshold': trial.suggest_float('prune_threshold', 1e-3, 3e-3),
+                    # 'prune_threshold': trial.suggest_float('prune_threshold', 1e-3, 3e-3),
+                    # 'tied_weights': trial.suggest_categorical('tied_weights', [0, 1]),
+                    'add_noise': trial.suggest_categorical('add_noise', [0, 1]),
+                    'use_l1': trial.suggest_categorical('use_l1', [0, 1]),
+                    'use_dropout': trial.suggest_categorical('use_dropout', [0, 1]),
                 }
-
+            for i, layer in enumerate(args.ae_layers_max_neurons):
+                params[f'layer{i+1}'] = trial.suggest_int(f'layer{i+1}', 100, layer)
+            # Some hyperparameters are not always required. They are set to a default value in Train.train()
+            if args.dloss in ['revTriplet', 'revDANN', 'DANN', 'inverseTriplet', 'normae']:
+                # gamma = 0 will ensure DANN is not learned
+                params['gamma'] = trial.suggest_float('gamma', 1e-8, 1e0, log=True)
+            if args.variational:
+                # beta = 0 because useless outside a variational autoencoder
+                params['beta'] = trial.suggest_float('beta', 1e-8, 1e0, log=True)
+            if args.zinb:
+                # zeta = 0 because useless outside a zinb autoencoder
+                params['zeta'] = trial.suggest_float('zeta', 1e-2, 1e2, log=True)
+            if 'threshold' not in params:
+                params['threshold'] = 0.  # TODO this should ne handled in bernn
         elif args.model_name == 'xgboostda':
             print('XGBOOST DASK')
             params = {
@@ -406,7 +434,6 @@ def create_objective(train, args):
                 'scaler': trial.suggest_categorical("scaler", ['minmax2']),
             }
             # Some hyperparameters are not always required. 
-
         return train.train(params)
     return objective
 
@@ -439,13 +466,22 @@ def make_args(args, batches_to_keep, concs):
     new_cropings = f"mz{args.min_mz}-{args.max_mz}rt{args.min_rt}-{args.max_rt}"
     args.exp_name = f'{"-".join(batches_to_keep)}_binary{args.binary}_{args.n_features}' \
                     f'_gkf{args.groupkfold}_ovr{args.ovr}_{new_cropings}_{"_".join(concs)}'
+    if args.rec_prototype == 1 and args.use_mapping == 1:
+        print('Using prototype: mapping turned off')
+        args.use_mapping = 0
+    args.ae_layers_max_neurons = [int(x) for x in args.ae_layers_max_neurons.split(',')]
+    
+    if args.normalize and args.use_sigmoid:
+        print('Using normalization: sigmoid final activation cannot be used')
+        args.use_sigmoid = 0
+
     return args
 
 
 def get_batches_infos():
     # TODO: Get from folder or database
     batch_dates = [
-        "BPatients-03-14-2025", "B15-06-29-2024",
+        "BPatients-03-14-2025", "cultures_pures", "B15-06-29-2024",
         "B14-06-10-2024", "B13-06-05-2024", "B12-05-31-2024", "B11-05-24-2024",
         "B10-05-03-2024", "B9-04-22-2024", "B8-04-15-2024",
         'B7-04-03-2024', 'B6-03-29-2024', 'B5-03-13-2024',
@@ -453,7 +489,7 @@ def get_batches_infos():
         'B1-02-02-2024'
     ]
     batches_to_keep = [
-        "BPatients-03-14-2025", "b15-06-29-2024",
+        "BPatients-03-14-2025", "cultures_pures", "b15-06-29-2024",
         "b14-06-10-2024", "b13-06-05-2024", "b12-05-31-2024", "b11-05-24-2024",
         "b10-05-03-2024", "b9-04-22-2024", "b8-04-15-2024",
         'b7-04-03-2024', 'b6-03-29-2024', 'b5-03-13-2024',
@@ -508,7 +544,7 @@ def get_args(batches_to_keep):
     import argparse
     parser = argparse.ArgumentParser()
     # parser.add_argument('--features_file', type=str, default='mutual_info_classif_scores.csv')
-    parser.add_argument('--n_epochs', type=int, default=3)
+    parser.add_argument('--n_epochs', type=int, default=1000)
     parser.add_argument('--remove_zeros', type=int, default=0)
     parser.add_argument('--log1p', type=int, default=0)
     parser.add_argument('--zinb', type=int, default=0)
@@ -519,6 +555,7 @@ def get_args(batches_to_keep):
     parser.add_argument('--model_name', type=str, default='linsvc')
     parser.add_argument('--train_on', type=str, default='all')
     parser.add_argument('--csv_file', type=str, default='inputs')
+    parser.add_argument('--bs', type=int, default=64)
     parser.add_argument('--ovr', type=int, default=1)
     parser.add_argument('--mz', type=float, default=10)
     parser.add_argument('--rt', type=float, default=10)
@@ -529,7 +566,7 @@ def get_args(batches_to_keep):
     parser.add_argument('--ms_level', type=int, default=2)
     parser.add_argument('--combat', type=int, default=0)  # TODO not using this anymore
     parser.add_argument('--shift', type=int, default=0)  # TODO keep this?
-    parser.add_argument('--log', type=str, default='inloop')
+    parser.add_argument('--mode', type=str, default='logaddinloop')
     parser.add_argument('--features_selection', type=str, default='none')
     parser.add_argument('--concs', type=str, default='na,h,l')
     parser.add_argument('--n_repeats', type=int, default=5)
@@ -543,16 +580,43 @@ def get_args(batches_to_keep):
     parser.add_argument("--remove_bad_samples", type=int, default=0)
     parser.add_argument("--device", type=str, default='cuda')
     parser.add_argument("--log_shap", type=int, default=1)
-    parser.add_argument("--fp", type=str, default=32)
+    parser.add_argument("--fp", type=str, default='float32', help='float16, float32, float64')
     parser.add_argument("--colsample_bytree", type=float, default=1.0)
     parser.add_argument("--max_bin", type=int, default=256)
     parser.add_argument("--sparse_matrix", type=int, default=0)
     parser.add_argument("--log_plots", type=int, default=1)
+    parser.add_argument("--log_metrics", type=int, default=1)
+    parser.add_argument("--log_neptune", type=int, default=1)
     parser.add_argument("--prune_threshold", type=float, default=0)
     parser.add_argument("--dloss", type=str, default='DANN')
     parser.add_argument("--warmup_after_warmup", type=int, default=1)
     parser.add_argument("--train_after_warmup", type=int, default=1)
     parser.add_argument("--test", type=int, default=0)
+    parser.add_argument("--fast_hparams_optim", type=int, default=0)
+    parser.add_argument('--patient_bact', type=str, default='', help='put nothing to analyse all bacteria')
+    parser.add_argument('--random_recs', type=int, default=0)
+    parser.add_argument('--rec_prototype', type=int, default=1)
+    parser.add_argument('--max_norm', type=float, default=0.)
+    parser.add_argument('--max_warmup', type=int, default=1000)
+    parser.add_argument('--num_workers', type=int, default=0)
+    parser.add_argument('--add_noise', type=int, default=1)
+    parser.add_argument('--normalize', type=int, default=1)
+    parser.add_argument('--use_mapping', type=int, default=0)
+    parser.add_argument('--use_sigmoid', type=int, default=0)
+    parser.add_argument('--use_threshold', type=int, default=0)
+    # parser.add_argument('--use_dropout', type=int, default=0)
+    parser.add_argument('--use_smoothing', type=int, default=0)
+    parser.add_argument('--variational', type=int, default=0)
+    parser.add_argument('--early_stop', type=int, default=50, help='Use early stopping during training')
+    parser.add_argument('--early_warmup_stop', type=int, default=10, help='Use early stopping during warmup')
+    parser.add_argument('--n_layers', type=int, default=2, help='Number of layers in the classifier')
+    parser.add_argument('--ae_layers_max_neurons', type=str, default='1000', help='Maximum number of neurons in the AE layers')
+    parser.add_argument('--scheduler', type=str, default='ReduceLROnPlateau', help='Learning rate scheduler type')
+    parser.add_argument('--xgboost_features', type=int, default=0, help='Use xgboost top parameters')
+    parser.add_argument('--clip_val', type=float, default=0.0, help='Gradient clipping value')
+    parser.add_argument('--kan', type=int, default=0, help='Use KAN during training')
+    parser.add_argument('--classif_loss', type=str, default='ce', help='Classification loss function. [ce, triplet]')
+    parser.add_argument('--rec_loss', type=str, default='l1', help='Reconstruction loss function. [l1, mse]')
 
     args = parser.parse_args()
 
@@ -566,7 +630,7 @@ def get_path(args, exp):
     path = f'resources/bacteries_2024/matrices/mz{args.mz}/rt{args.rt}/' \
         f'mzp{args.mzp}/rtp{args.rtp}/thr{args.threshold}/{args.spd}spd/' \
         f'ms{args.ms_level}/combat{args.combat}/shift{args.shift}/none/' \
-        f'log{args.log}/{args.features_selection}/{exp}'
+        f'{args.mode}/{args.features_selection}/{exp}'
     results_path = f'results/multi/mz{args.mz}/rt{args.rt}/ms{args.ms_level}/{args.spd}spd/thr{args.threshold}/' \
         f'{args.train_on}/{args.exp_name}/{args.model_name}/'
     return path, results_path
@@ -574,11 +638,14 @@ def get_path(args, exp):
 
 def change_data_type(data, args):
     if args.fp == 'float16':
-        data['inputs']['all'] = data['inputs']['all'].astype(np.float16)
+        for g in list(data['inputs'].keys()):
+            data['inputs'][g] = data['inputs'][g].astype(np.float16)
     elif args.fp == 'float32':
-        data['inputs']['all'] = data['inputs']['all'].astype(np.float32)
+        for g in list(data['inputs'].keys()):
+            data['inputs'][g] = data['inputs'][g].astype(np.float32)
     elif args.fp == 'float64':
-        data['inputs']['all'] = data['inputs']['all'].astype(np.float64)
+        for g in list(data['inputs'].keys()):
+            data['inputs'][g] = data['inputs'][g].astype(np.float64)
     return data
 
 
@@ -621,20 +688,48 @@ def get_model(args):
     elif args.model_name == 'xgboostex':
         from train_xgboost_extmem import Train
         cfr = xgboost.XGBClassifier
+    elif args.model_name == 'lsm':
+        print('LSM: LargeSpectralBERT')
+        Train = TrainLSM
+        cfr = None  # Not used for LSM, handled inside TrainLSM
     else:
         raise ValueError(f'Invalid model name: {args.model_name}')
     return cfr, Train, args
+
+def select_xgboost_features(data, uniques, concs, batch_dates, scaler, args):
+    # Select the top n_features based on importance
+    print(f'Selecting top {args.n_features} features using XGBoost results')
+    path = (
+        f"results/multi/mz{args.mz}/rt{args.rt}/ms{args.ms_level}/"
+        f"{args.spd}spd/thr0.0/all/"
+        f"{'-'.join(batch_dates)}_binary{args.binary}_{args.n_features}_"
+        f"gkf{args.groupkfold}_ovr{args.ovr}_"
+        f"mz{args.min_mz}-{args.max_mz}rt{args.min_rt}-{args.max_rt}_"
+        f"{'_'.join(concs)}/xgboost/ords_filtered/"
+        f"xgboost_feature_importance_{scaler}.csv"
+    )
+    feature_importance = pd.read_csv(path)
+    if args.n_features > 0:
+        top_features = feature_importance.nlargest(args.n_features, 'importance')['feature'].values
+    else:
+        top_features = feature_importance.nlargest(feature_importance.shape[0], 'importance')['feature'].values
+    # Filter the data to keep only the top features
+    print(f"Selected features: {top_features.shape[0]} features from initial {len(data['inputs']['all'])}")
+    data['inputs'] = {k: v[top_features] for k, v in data['inputs'].items()}
+
+    return data
 
 
 if __name__ == '__main__':
     batch_dates, batches_to_keep = get_batches_infos()
     args = get_args(batches_to_keep)
     concs = args.concs.split(',')
-    batch_dates, batches_to_keep = get_batches_infos()
     cropings = "mz0-10000rt0-320"
-    exp = f'all_{"-".join(batch_dates)}_gkf{args.groupkfold}_{cropings}_5splits'  
+    exp = f'all_{"-".join(batch_dates)}_gkf{args.groupkfold}_{cropings}_5splits'
     path, results_path = get_path(args, exp)
     data, uniques = get_data_all(path, args)
+    if args.xgboost_features:
+        data = select_xgboost_features(data, uniques, concs, batches_to_keep, 'minmax', args)
 
     # Perform EDA
     # perform_eda(data, path)
@@ -643,12 +738,20 @@ if __name__ == '__main__':
     # data = keep_some_batches(data, batches_to_keep)
 
     cfr, Train, args = get_model(args)
-    train = Train(name="inputs", model=cfr, data=data, uniques=uniques,
-                  log_path=results_path, args=args, log_metrics=True,
-                  logger=None, log_neptune=True, mlops='None')
+    if args.model_name == 'lsm':
+        train = Train(name="inputs", model=None, data=data, uniques=uniques,
+                      log_path=results_path, args=args, log_metrics=args.log_metrics,
+                      logger=None, log_neptune=args.log_neptune, mlops='None')
+    else:
+        train = Train(name="inputs", model=cfr, data=data, uniques=uniques,
+                      log_path=results_path, args=args, log_metrics=args.log_metrics,
+                      logger=None, log_neptune=args.log_neptune, mlops='None')
 
     # Create and run the Optuna study
-    study = optuna.create_study(direction='minimize')
+    study = optuna.create_study(
+        direction='maximize',
+        sampler=optuna.samplers.TPESampler(seed=42)  # <--- Seed Optuna's sampler
+    )
     study.optimize(create_objective(train, args), n_trials=30)
 
     # Save optimization results and plots

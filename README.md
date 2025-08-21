@@ -8,6 +8,7 @@
 `apt-get install -y python3`<br/>
 `apt-get install -y python3-pip`<br/>
 `apt-get install -y r-base`<br/>
+`apt-get install -y graphviz`<br/>
 `apt-get purge -y openjdk-\*`<br/>
 `apt install -y openjdk-8-jre`<br/>
 `apt install -y openjdk-8-jdk`<br/>

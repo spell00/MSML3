@@ -66,12 +66,15 @@ def make_pval_table(data, unique_labels):
     print(tabulate(table))
 
 
-def log_fct(data, form, metrics, make_pval=False):
-    metrics = log_metrics(data, metrics, form)
+def log_fct(data, metric_name, metrics, make_pval=False):
+    """
+    Log metrics under a custom metric_name (e.g. 'inputs', 'bottleneck', etc.)
+    """
+    metrics = log_metrics(data, metrics, metric_name)
     return metrics
 
 
-def log_ord(data, uniques, path, scaler_name, run=None):
+def log_ord(data, uniques, path, scaler_name, step_name, run=None):
     data_tmp = copy.deepcopy(data)
     data_tmp['inputs']['all'] = pd.concat((data['inputs']['all'], data['inputs']['urinespositives']), axis=0)
     data_tmp['labels']['all'] = np.concatenate((data['labels']['all'], data['labels']['urinespositives']))
@@ -98,12 +101,12 @@ def log_ord(data, uniques, path, scaler_name, run=None):
             {'batches': unique_batches, 'labels': unique_labels,
              'manips': unique_manips, 'urines': unique_urines, 'concs': unique_concs,
              'urinespositives': unique_urinespositives
-             }, path, scaler_name, run)
+             }, path, scaler_name, step_name, run)
     log_ORD({'model': UMAP(n_components=2), 'name': f'UMAP_{scaler_name}'}, data_tmp,
             {'batches': unique_batches, 'labels': unique_labels,
              'manips': unique_manips, 'urines': unique_urines, 'concs': unique_concs,
              'urinespositives': unique_urinespositives
-             }, path, scaler_name, run)
+             }, path, scaler_name, step_name, run)
     if unique_labels is not None:
         try:
             log_LDA(LDA, data_tmp, {'batches': unique_batches, 'labels': unique_labels}, path, scaler_name)
@@ -134,7 +137,7 @@ def pyGPCA(data, group, name, metrics):
     return metrics, results
 
 
-def log_ORD(ordin, data, uniques, path, scaler_name, run=None):
+def log_ORD(ordin, data, uniques, path, scaler_name, step_name='inputs', run=None):
     model = ordin['model']
     data = copy.deepcopy(data)
     pcs_train = model.fit_transform(data['inputs']['all'])
@@ -213,7 +216,7 @@ def log_ORD(ordin, data, uniques, path, scaler_name, run=None):
         plt.show()
         plt.savefig(f'{path}/{ordin["name"]}_{name}_{scaler_name}.png')
         if run is not None:
-            run[f'{ordin["name"]}/{name}'].upload(fig)
+            run[f'{step_name}/{ordin["name"]}/{name}'].upload(fig)
         plt.close()
 
 
@@ -539,55 +542,24 @@ def batch_f1_score(batch_score, class_score):
     return 2 * (1 - batch_score) * (class_score) / (1 - batch_score + class_score)
 
 
-def log_metrics(data, metrics, form):
-    # unique_batches = set(batches['all'])
-    # if len(unique_labels) > 2:
-    #     bout = 0
-    # else:
-    #     bout = 1
-    if form not in metrics:
-        metrics[form] = {}
-    metrics = get_metrics(data, metrics, form)
-    # for repres in ['inputs']:
-    #     # for metric in ['silhouette', 'kbet', 'lisi']:
-    #     for metric in ['silhouette']:
-    #         for group in ['all']:
-    #             if metric == 'lisi':
-    #                 try:
-    #                     metrics[form][group][metric]['F1'] = batch_f1_score(
-    #                         batch_score=metrics[form][group][metric]['domains'][0] / len(unique_batches),
-    #                         class_score=metrics[form][group][metric]['labels'][0] / len(unique_labels),
-    #                     )
-    #                 except:
-    #                     metrics[form][group][metric]['F1'] = batch_f1_score(
-    #                         batch_score=metrics[form][group][metric]['domains'] / len(unique_batches),
-    #                         class_score=metrics[form][group][metric]['labels'] / len(unique_labels),
-    #                     )
-    #             elif metric == 'silhouette':
-    #                 metrics[form][group][metric]['F1'] = batch_f1_score(
-    #                     batch_score=(metrics[form][group][metric]['domains'] + 1) / 2,
-    #                     class_score=(metrics[form][group][metric]['labels'] + 1) / 2,
-    #                 )
-    #             elif metric == 'kbet':
-    #                 try:
-    #                     metrics[form][group][metric]['F1'] = batch_f1_score(
-    #                         batch_score=metrics[form][group][metric]['domains'] / len(unique_batches),
-    #                         class_score=metrics[form][group][metric]['labels'] / len(unique_labels),
-    #                     )
-    #                 except:
-    #                     pass
+def log_metrics(data, metrics, metric_name):
+    """
+    Log metrics under a custom metric_name (e.g. 'inputs', 'bottleneck', etc.)
+    """
+    if metric_name not in metrics:
+        metrics[metric_name] = {}
+    metrics = get_metrics(data, metrics, metric_name)
     for repres in ['inputs']:
         for metric in ['adjusted_rand_score', 'adjusted_mutual_info_score']:
-            for group in ['all']:  # , 'set'
+            for group in ['all']:
                 try:
-                    metrics[form][group][metric]['F1'] = batch_f1_score(
-                        batch_score=metrics[form][group][metric]['domains'],
-                        class_score=metrics[form][group][metric]['labels'],
+                    metrics[metric_name][group][metric]['F1'] = batch_f1_score(
+                        batch_score=metrics[metric_name][group][metric]['domains'],
+                        class_score=metrics[metric_name][group][metric]['labels'],
                     )
                 except Exception as e:
                     print(e)
-                    metrics[form][group][metric]['F1'] = -1
-
+                    metrics[metric_name][group][metric]['F1'] = -1
     return metrics
 
 
@@ -824,11 +796,16 @@ def calculate_precision_per_bact(df, bacteria_cols):
     precisions = {b: [] for b in bacteria_cols}
     precisions_cv = {b: [] for b in bacteria_cols}
     for bacterium in bacteria_cols:
+        if bacterium not in df['labels'].unique():
+            # precision[bacterium] = 0
+            # precisions[bacterium] = []
+            # precisions_cv[bacterium] = []
+            continue    
         tmp = df.copy()
         tmp['labels'] = tmp['labels'].apply(lambda x: 1 if x == bacterium else 0)
         tmp['preds'] = tmp['preds'].apply(lambda x: 1 if x == bacterium else 0)
         corrects = df[df['labels'] == df['preds']][df['labels'] == bacterium].shape[0]
-        total = df[df['preds'] == bacterium].shape[0]
+        total = df[df['labels'] == bacterium].shape[0]
         precision[bacterium] = corrects / total
     for bacterium in bacteria_cols:
         for batch in df['batches'].unique():
@@ -1193,11 +1170,15 @@ def plot_bars(args, run, bacteria_cols):
         test_metrics_batch_cv_df = pd.DataFrame(test_metrics_batch_cv)
         test_metrics_batch_cv_df.to_csv(f'{path}/test_{args.exp_name}_{metric}_by_batch_cv.csv')
 
-        make_graph(metrics_bact, metric, 'Bacterium', bacteria_cols,
+        try:
+            make_graph(metrics_bact, metric, 'Bacterium', bacteria_cols,
                    f'{metric} by Bacterium. Total valid: {total_valid:.2f}, test: {total_test:.2f}',
                    f'{path}/{args.exp_name}_{metric}_by_bact', run
                    )
-
+        except Exception as e:
+            print(e)
+            print('Error in make_graph for bacterium')
+            pass
         try:
             make_graph(metrics_batch, metric, 'Batch', valid_df['batches'].unique(),
                        f'{metric} by Batch. Total valid: {total_valid:.2f}, test: {total_test:.2f}',

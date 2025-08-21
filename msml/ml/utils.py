@@ -264,7 +264,10 @@ def columns_stats_over0(df, name, bins, inference=False):
             rt_counts[features_binning[1]] += 1
     # Sort the dicts by keys value
     mz_parents_counts = dict(sorted(mz_parents_counts.items(), key=lambda item: float(item[0]), reverse=False))
-    mz_children_counts = dict(sorted(mz_children_counts.items(), key=lambda item: int(item[0]), reverse=False))
+    if name['mz'] < 1:
+        mz_children_counts = dict(sorted(mz_children_counts.items(), key=lambda item: float(item[0]), reverse=False))
+    else:
+        mz_children_counts = dict(sorted(mz_children_counts.items(), key=lambda item: int(item[0]), reverse=False))
     rt_counts = dict(sorted(rt_counts.items(), key=lambda item: int(item[0]), reverse=False))
 
     # Plot the counts
@@ -333,7 +336,10 @@ def columns_stats_0(df, name, bins, inference=False):
             rt_counts[features_binning[1]] += 1
     # Sort the dicts by keys value
     mz_parents_counts = dict(sorted(mz_parents_counts.items(), key=lambda item: float(item[0]), reverse=False))
-    mz_children_counts = dict(sorted(mz_children_counts.items(), key=lambda item: int(item[0]), reverse=False))
+    if name['mz'] < 1:
+        mz_children_counts = dict(sorted(mz_children_counts.items(), key=lambda item: float(item[0]), reverse=False))
+    else:
+        mz_children_counts = dict(sorted(mz_children_counts.items(), key=lambda item: int(item[0]), reverse=False))
     rt_counts = dict(sorted(rt_counts.items(), key=lambda item: int(item[0]), reverse=False))
 
     # Plot the counts
@@ -357,7 +363,7 @@ def columns_stats_0(df, name, bins, inference=False):
                 f"mz_min{name['mz_min']}/rt_min{name['rt_min']}/" \
                 f"mz_max{name['mz_max']}/rt_max{name['rt_max']}/" \
                 f"mz_bin{name['mz_bin']}/rt_bin{name['rt_bin']}/", exist_ok=True)
-    
+
     plt.savefig(f"columns/{name['scaler']}/mz{name['mz']}/rt{name['rt']}/" \
                 f"mz_min{name['mz_min']}/rt_min{name['rt_min']}/" \
                 f"mz_max{name['mz_max']}/rt_max{name['rt_max']}/" \

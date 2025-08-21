@@ -23,15 +23,15 @@ from pickle import dump, load
 from scipy.sparse import vstack, hstack, csc_matrix
 from tqdm import tqdm
 import warnings
-from .old.features_selection import get_feature_selection_method
-from .old.features_selection_sparse import keep_only_not_zeros_sparse, keep_not_zeros_sparse, \
+from msml.preprocess.old.features_selection import get_feature_selection_method
+from msml.preprocess.old.features_selection_sparse import keep_only_not_zeros_sparse, keep_not_zeros_sparse, \
     process_sparse_data, count_array, split_sparse, MultiKeepNotFunctionsSparse, \
     process_sparse_data_supervised, make_lists
 from scipy.signal import find_peaks
 from statsmodels.nonparametric.smoothers_lowess import lowess
 from msalign import msalign
 from functools import reduce
-from .utils import crop_data, adjust_tensors, delete_rows_csr
+from msml.preprocess.utils import crop_data, adjust_tensors, delete_rows_csr
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(filename='make_tensors_ms2.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
@@ -56,18 +56,10 @@ class MakeTensorsMultiprocess:
 
         self.args = args
         self.bins = bins
-        self.is_sparse = args.is_sparse
 
         self.path = path
         self.tsv_list = tsv_list
         self.labels_list = labels_list
-        self.save = args.save
-        self.test_run = args.test_run
-        # self.mz_shift = mz_shift
-        # self.rt_shift = rt_shift
-        self.log2 = args.log2
-        self.find_peaks = args.find_peaks
-        self.lowess = args.lowess
         if args.n_samples != -1:
             self.tsv_list = self.tsv_list[:args.n_samples]
             self.labels_list = self.labels_list[:args.n_samples]
@@ -112,13 +104,13 @@ class MakeTensorsMultiprocess:
         else:
             rt_shift = 0
 
-        if self.is_sparse:
-            if self.log2 == 'inloop':
+        if self.args.is_sparse:
+            if self.args.intensity_mode == 'inloop':
                 dtype = pd.SparseDtype("float32", 0)
             else:
                 dtype = pd.SparseDtype("float64", 0)
         else:
-            if self.log2 == 'inloop':
+            if self.args.intensity_mode == 'inloop':
                 dtype = "float32"
             else:
                 dtype = "float64"
@@ -171,34 +163,27 @@ class MakeTensorsMultiprocess:
                 rt = np.round(rt, self.bins['rt_rounding'])
             if self.bins['mz_rounding'] != 0:
                 mz = np.round(mz, self.bins['mz_rounding'])
-            # final[min_parent][mz][rt] += np.log1p(intensity)
+
             mz = np.round(float(mz), self.bins['mz_rounding'])
             rt = np.round(float(rt), self.bins['rt_rounding'])
-            # if self.is_sparse and prev_mz != rt:
-            # Change todense on mz rather than rt
-            # if prev_mz != -1:
-            #     final[min_parent] = final[min_parent].astype(spdtypes)
-            # final[min_parent] = final[min_parent].sparse.to_dense()
-            if self.log2 == 'inloop':
-                try:
-                    final[min_parent].loc[mz].loc[rt] += np.log1p(intensity)
-                except:
-                    print(min_parent, mz, rt, intensity)
-            else:
-                final[min_parent].loc[mz].loc[rt] += intensity
-            # if self.is_sparse:
-            #     final[min_parent][rt] = final[min_parent][rt].astype(spdtypes)
-            # del min_parent, rt, mz, intensity, line
-            # prev_mz = mz
-            if self.test_run and i > 10000:
+            final = update_bin(final, min_parent, mz, rt, intensity, mode=self.args.intensity_mode)
+            # if self.args.intensity_mode == 'inloop':
+            #     try:
+            #         final[min_parent].loc[mz].loc[rt] += np.log1p(intensity)
+            #     except:
+            #         print(min_parent, mz, rt, intensity)
+            # else:
+            #     final[min_parent].loc[mz].loc[rt] += intensity
+
+            if self.args.test_run and i > 10000:
                 break
         for min_parent in final:
             final[min_parent] = final[min_parent].astype(dtype)
-        if self.lowess:
+        if self.args.lowess:
             for df in final:
                 for ii, line1 in enumerate(final[df].values):
                     final[df].iloc[ii] = lowess(line1, list(final[df].columns), frac=0.1, return_sorted=False)
-        if self.find_peaks:
+        if self.args.find_peaks:
             for df in final:
                 for ii, line1 in enumerate(final[df].values):
                     mask = find_peaks(final[df].iloc[ii], height=0.1, distance=2)
@@ -415,8 +400,6 @@ if __name__ == "__main__":
                         help="Is it a test run? 1 for true 0 for false")
     parser.add_argument("--n_samples", type=int, default=-1,
                         help="How many samples to run? Only modify to make test runs faster (-1 for all samples)")
-    parser.add_argument("--log2", type=str, default='after',
-                        help='log the data in the loop, after the loop or not log the data. Choices: [inloop, after, no]')
     parser.add_argument("--shift", type=int, default=0, help='Shift the data matrix')
     parser.add_argument("--binary", type=int, default=0, help='Blanks vs bacteria')
     parser.add_argument("--threshold", type=float, default=1)
@@ -450,6 +433,9 @@ if __name__ == "__main__":
     parser.add_argument("--min_rt", type=int, default=140)
     parser.add_argument("--max_rt", type=int, default=320)
     parser.add_argument("--decimals", type=int, default=-1)
+    parser.add_argument("--intensity_mode", type=str, default="no",
+        choices=["logaddinloop", "logmax", "logaddafterloop", "max", "no"],
+        help="How to combine intensities for each (mz, rt) bin: logaddinloop, logmax, logaddafterloop, max, or no (add).")
 
     args = parser.parse_args()
     args.combat_corr = 0  # TODO to remove
@@ -504,10 +490,10 @@ if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.realpath(__file__))
     dir_name = f"{script_dir}/{out_dest}/mz{args.mz_bin}/rt{args.rt_bin}/mzp{args.mz_bin_post}/" \
                f"rtp{args.rt_bin_post}/thr{args.threshold}/{args.spd}spd/ms2/combat{args.combat_corr}/" \
-               f"shift{args.shift}/{args.scaler}/log{args.log2}/{args.feature_selection}/"
+               f"shift{args.shift}/{args.scaler}/{args.intensity_mode}/{args.feature_selection}/"
 
     batches = [
-        "BPatients-03-14-2025", "B15-06-29-2024",
+        "BPatients-14-03-2025", 'cultures_pures', "B15-06-29-2024",
         "B14-06-10-2024", "B13-06-05-2024", "B12-05-31-2024",
         "B11-05-24-2024", "B10-05-03-2024", "B9-04-22-2024",
         "B8-04-15-2024", 'B7-04-03-2024', 'B6-03-29-2024',
@@ -634,7 +620,7 @@ if __name__ == "__main__":
     pool.join()
 
     columns = new_columns
-    if args.log2 == 'after':
+    if args.intensity_mode == 'after':
         print("Logging the data...")
         data_matrix = np.log1p(data_matrix)  # .astype(np.float32)
     if args.scaler in ['robust', 'standard', 'minmax']:
@@ -765,3 +751,27 @@ if __name__ == "__main__":
         f'{dir_name}/{args.run_name}/inputs_{args.feature_selection}.csv',
         index=True, index_label='ID')
     print('Duration: {}'.format(datetime.now() - start_time))
+
+
+def update_bin(final, min_parent, mz, rt, intensity, mode="no"):
+    """
+    Update the value in final[min_parent] at (mz, rt) according to the specified mode.
+    mode: "logaddinloop", "logmax", "logaddafterloop", "max", "no"
+    """
+    try:
+        if mode == "no":
+            final[min_parent].loc[mz].loc[rt] += intensity
+        elif mode == "max":
+            final[min_parent].loc[mz].loc[rt] = max(final[min_parent].loc[mz].loc[rt], intensity)
+        elif mode == "logaddinloop":
+            final[min_parent].loc[mz].loc[rt] += np.log1p(intensity)
+        elif mode == "logmax":
+            final[min_parent].loc[mz].loc[rt] = max(final[min_parent].loc[mz].loc[rt], np.log1p(intensity))
+        elif mode == "logaddafterloop":
+            # Do nothing here; apply np.log1p to the whole matrix after the loop
+            final[min_parent].loc[mz].loc[rt] += intensity
+        else:
+            raise ValueError(f"Unknown intensity_mode: {mode}")
+    except Exception:
+        print("update_bin error:", min_parent, mz, rt, intensity)
+    return final

@@ -59,7 +59,7 @@ def test_adjust_tensors():
         'mz_bin_post': 0.1,
         'rt_bin_post': 0.1
     })
-    
+
     adjusted = adjust_tensors(list_matrices, max_features, args_dict)
     assert len(adjusted) == 1
     assert adjusted[0][0].shape[1] == max_features['max_rt'] * max_features['max_mz']

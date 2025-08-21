@@ -326,6 +326,9 @@ def make_lists(dirinput, path, run_name):
         if label in ['blanc', 'Blanc', 'blk', 'Blk', 'urinespositives'] or label == 'Blanc':
             concentration = 'NA'
             urine = tmp[5]
+        elif tmp[-1] in ['cultpure']:
+            concentration = 'NA'
+            urine = 'NA'
         else:
             concentration = tmp[7]
             urine = tmp[6]

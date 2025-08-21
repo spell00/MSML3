@@ -10,7 +10,7 @@ from .loggings import log_ord, log_fct, log_neptune
 from sklearn.metrics import matthews_corrcoef as MCC
 from sklearn.metrics import accuracy_score as ACC
 # from scipy import stats
-from .log_shap import log_shap
+# from .log_shap import log_shap
 import xgboost
 # import pipeline from sklearn
 from .utils import columns_stats_over0
@@ -307,6 +307,7 @@ class Train_xgboost(Train):
                 "num_class": len(self.unique_labels),
                 "colsample_bytree": self.args.colsample_bytree,
                 "max_bin": self.args.max_bin,
+                
                 # "subsample": 0.1,
                 # "sampling_method": "gradient_based",
             }, dmatrices['train'],
@@ -359,8 +360,12 @@ class Train_xgboost(Train):
             'inputs': copy.deepcopy(self.data['inputs']),
             'labels': copy.deepcopy(self.data['labels']),
             'batches': copy.deepcopy(self.data['batches']),
+            'batches_labels': copy.deepcopy(self.data['batches_labels']),
             'concs': copy.deepcopy(self.data['concs']),
             'names': copy.deepcopy(self.data['names']),
+            'manips': copy.deepcopy(self.data['manips']),
+            'urines': copy.deepcopy(self.data['urines']),
+            'cats': copy.deepcopy(self.data['cats']),
         }
 
         if self.args.binary:
@@ -382,6 +387,13 @@ class Train_xgboost(Train):
             all_data['inputs']['valid'] = all_data['inputs']['valid'].iloc[:, not_zeros_col]
             all_data['inputs']['test'] = all_data['inputs']['test'].iloc[:, not_zeros_col]
             all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[:, not_zeros_col]
+
+        # Initialize run as None
+        run = None
+
+        # Add dimension reduction visualization after filtering
+        # if self.args.log_plots:
+        #     log_ord(all_data, self.uniques, ord_path, scaler_name, 'inputs', run)
 
         if self.log_neptune:
             # Create a Neptune run object
@@ -423,7 +435,7 @@ class Train_xgboost(Train):
             model['n_features'] = run['n_features'] = self.args.n_features
             model['total_features'] = run['total_features'] = all_data['inputs']['all'].shape[1]
             model['ms_level'] = run['ms_level'] = self.args.ms_level
-            model['log'] = run['log'] = self.args.log
+            model['log1p'] = run['log1p'] = self.args.log1p
             model['batches'] = run['batches'] = '-'.join(self.uniques['batches'])
             model['context'] = run['context'] = 'train'
             model['remove_bad_samples'] = run['remove_bad_samples'] = self.args.remove_bad_samples
@@ -483,9 +495,9 @@ class Train_xgboost(Train):
             upos['names'] = all_data['names']['urinespositives']
             # concs_upos = all_data['concs']['urinespositives']
             data_dict = self.split_data(all_data, upos, h)
-            print(f"Batches. Train: {np.unique(data_dict['batches']['train'])},"
-                  f"Valid: {np.unique(data_dict['batches']['valid'])},"
-                  f"Test: {np.unique(data_dict['batches']['test'])}")
+            print(f"Batches. Train: {np.unique(data_dict['batches_labels']['train'])},"
+                  f"Valid: {np.unique(data_dict['batches_labels']['valid'])},"
+                  f"Test: {np.unique(data_dict['batches_labels']['test'])}")
             data_dict = augment_dataset(data_dict, n_aug, p, g)
             lists = add_infos_to_dict(data_dict, lists, self.unique_labels)
 
@@ -509,11 +521,11 @@ class Train_xgboost(Train):
         ord_path = f"{'/'.join(self.log_path.split('/')[:-1])}/ords/"
         os.makedirs(ord_path, exist_ok=True)
         if self.args.log_plots:
-            log_ord(self.data, self.uniques, ord_path, scaler_name, run)
+            log_ord(self.data, self.uniques, ord_path, scaler_name, 'inputs', run)
         data = copy.deepcopy(self.data)
         metrics = log_fct(data, scaler_name, metrics)
         if self.args.log_plots:
-            log_ord(data, self.uniques2, ord_path, f'{scaler_name}_blancs', run)
+            log_ord(data, self.uniques2, ord_path, f'{scaler_name}_blancs', 'inputs', run)
 
         try:
             np.concatenate(lists['proba']['posurines']).max(1)
@@ -546,45 +558,11 @@ class Train_xgboost(Train):
         self.save_calibration_curves(lists, run)
         self.save_roc_curves(lists, run)
         if np.mean(lists['mcc']['valid']) > np.mean(self.best_scores['mcc']['valid']):
-            if self.args.log_shap:
-                Xs = {
-                    'train': data_dict['data']['train'],
-                    'valid': data_dict['data']['valid'],
-                    'test': data_dict['data']['test'],
-                    # 'posurines': all_data['inputs']['urinespositives'],
-                }
-                ys = {
-                    'train': lists['classes']['train'][-1],
-                    'valid': lists['classes']['valid'][-1],
-                    'test': lists['classes']['test'][-1],
-                    # 'posurines': np.array([
-                    #     np.argwhere(
-                    #         label == self.unique_labels)[0][0]
-                    #     for label in all_data['labels']['urinespositives']
-                    # ]),
-                }
-                labels = {
-                    'train': lists['labels']['train'][-1],
-                    'valid': lists['labels']['valid'][-1],
-                    'test': lists['labels']['test'][-1],
-                    # 'posurines': np.array([
-                    #     np.argwhere(label == self.unique_labels)[0][0]
-                    #     for label in all_data['labels']['urinespositives']
-                    # ]),
-                }
-                args_dict = {
-                    'inputs': Xs,
-                    'ys': ys,
-                    'labels': labels,
-                    'model': m,
-                    'model_name': self.args.model_name,
-                    'log_path': self.log_path,
-                }
-                run = log_shap(run, args_dict)
-                run['log_shap'] = 1
-            else:
-                run['log_shap'] = 0
-
+            try:
+                self.log_xgboost_features_ord(m, all_data, scaler_name, run)
+            except:
+                pass
+            self.log_shap(m, lists, data_dict, run)
             # save the features kept
             with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl', 'wb') as f:
                 pickle.dump(data_dict['data']['test'].columns, f)
@@ -616,3 +594,73 @@ class Train_xgboost(Train):
             model.stop()
 
         return 1 - np.mean(lists['mcc']['valid'])
+
+    def log_xgboost_features_ord(self, m, all_data, scaler_name, run):
+        # log ords using only the used features
+        ord_path = f"{'/'.join(self.log_path.split('/')[:-1])}/ords_filtered/"
+        os.makedirs(ord_path, exist_ok=True)
+        if self.args.log_plots:
+            # Get features used by XGBoost model
+            feature_importance = m.get_score(importance_type='weight')
+            # Only keep features with non-zero importance
+            used_features = [f for f, imp in feature_importance.items() if imp > 0]
+
+            # Save XGBoost feature importance
+            xgb_importance_df = pd.DataFrame({
+                'feature': list(feature_importance.keys()),
+                'importance': list(feature_importance.values())
+            }).sort_values('importance', ascending=False)
+            xgb_importance_df.to_csv(f'{ord_path}/xgboost_feature_importance_{scaler_name}.csv', index=False)
+            if run is not None:
+                run[f'feature_importance/xgboost_{scaler_name}'].upload(
+                    f'{ord_path}/xgboost_feature_importance_{scaler_name}.csv'
+                )
+
+            # Filter data_dict to only include used features
+            filtered_data_dict = copy.deepcopy(all_data)
+            filtered_data_dict['inputs']['all'] = filtered_data_dict['inputs']['all'][used_features]
+            filtered_data_dict['inputs']['urinespositives'] =\
+                filtered_data_dict['inputs']['urinespositives'][used_features]
+
+            # Log ord with filtered features
+            log_ord(filtered_data_dict, self.uniques, ord_path, scaler_name, 'filtered', run)
+            log_ord(filtered_data_dict, self.uniques2, ord_path, scaler_name, 'filtered_blancs', run)
+
+            # Get SHAP values for feature selection
+            import shap
+            explainer = shap.TreeExplainer(m)
+            shap_values = explainer.shap_values(all_data['inputs']['all'])
+
+            # If multiclass, take mean absolute SHAP values across classes
+            if isinstance(shap_values, list):
+                mean_shap = np.mean([np.abs(sv) for sv in shap_values], axis=0)
+            else:
+                mean_shap = np.abs(shap_values)
+
+            # Get mean absolute SHAP value for each feature
+            mean_shap_per_feature = np.mean(mean_shap, axis=0)
+            feature_names = all_data['inputs']['all'].columns
+
+            # Save SHAP feature importance
+            shap_importance_df = pd.DataFrame({
+                'feature': feature_names,
+                'shap_importance': mean_shap_per_feature
+            }).sort_values('shap_importance', ascending=False)
+            shap_importance_df.to_csv(f'{ord_path}/shap_feature_importance_{scaler_name}.csv', index=False)
+            if run is not None:
+                run[f'feature_importance/shap_{scaler_name}'].upload(
+                    f'{ord_path}/shap_feature_importance_{scaler_name}.csv'
+                )
+
+            # Select features with non-zero SHAP values
+            shap_used_features = [f for f, sv in zip(feature_names, mean_shap_per_feature) if sv.sum() > 0]
+
+            # Create new filtered data dict with SHAP-selected features
+            shap_filtered_data_dict = copy.deepcopy(all_data)
+            shap_filtered_data_dict['inputs']['all'] = shap_filtered_data_dict['inputs']['all'][shap_used_features]
+            shap_filtered_data_dict['inputs']['urinespositives'] =\
+                shap_filtered_data_dict['inputs']['urinespositives'][shap_used_features]
+
+            # Log ord with SHAP-filtered features
+            log_ord(shap_filtered_data_dict, self.uniques, ord_path, scaler_name, 'shap', run)
+            log_ord(shap_filtered_data_dict, self.uniques2, ord_path, scaler_name, 'shap_blancs', run)

@@ -141,12 +141,14 @@ def make_bar_plot(df, values, group, run, log_path, category='explainer', mlops=
         run[f'shap/barold_{category}/{group}'].upload(f)
     plt.close(f)
 
+
 def make_dependence_plot(df, values, var, group, run, log_path, category='explainer', mlops='neptune'):
     shap.dependence_plot(var, values[1], df, show=False)
     f = plt.gcf()
     if mlops == 'neptune':
         run[f'shap/dependence_{category}/{group}'].upload(f)
     plt.close(f)
+
 
 def log_explainer(run, group, args_dict):
     model = args_dict['model']
@@ -224,14 +226,14 @@ def log_explainer(run, group, args_dict):
             plt.savefig(f"{log_path}/{group}_linear_shap_{label}_kde_abs.png")
             plt.close()
             run[f'shap/linear_{group}_{label}_kde'].upload(f"{log_path}/{group}_linear_shap_{label}_kde_abs.png")
-            
+
             values, base = np.histogram(shap_values_df.abs(), bins=40)
-            #evaluate the cumulative
+            # evaluate the cumulative
             cumulative = np.cumsum(values)
             # plot the cumulative function
             plt.figure(figsize=(12, 8))
             plt.plot(base[:-1], cumulative, c='blue')
-            #plot the survival function
+            # plot the survival function
             plt.plot(base[:-1], len(shap_values_df.abs())-cumulative, c='green')
             plt.xlabel('SHAP value')
             plt.ylabel('Cumulative Density')
@@ -246,7 +248,7 @@ def log_explainer(run, group, args_dict):
         # TODO Verifier que l'ordre est bon
         for i, label in enumerate(unique_classes):
             shap_values_df = pd.DataFrame(
-                np.c_[shap_values.base_values[:, i], shap_values.values[:, :, i]], 
+                np.c_[shap_values.base_values[:, i], shap_values.values[:, :, i]],
                 columns=['bv'] + list(x_df.columns)
             )
             # Remove shap values that are 0
@@ -293,13 +295,13 @@ def log_explainer(run, group, args_dict):
                 plt.title(f'base_value: {np.round(bv, 2)}')
                 # if i == 0:
                 run[f'shap/linear_{group}_{label}_kde'].upload(f"{log_path}/{group}_linear_shap_{label}_kde_abs.png")
-                
+
                 values, base = np.histogram(shap_values_df.abs(), bins=40)
-                #evaluate the cumulative
+                # evaluate the cumulative
                 cumulative = np.cumsum(values)
                 # plot the cumulative function
                 plt.plot(base[:-1], cumulative, c='blue')
-                #plot the survival function
+                # plot the survival function
                 plt.plot(base[:-1], len(shap_values_df.abs())-cumulative, c='green')
                 plt.ylabel('Cumulative Density')
                 plt.xlabel('SHAP value')
@@ -314,10 +316,10 @@ def log_explainer(run, group, args_dict):
                 pass
 
     # if x_df.shape[1] <= 1000:
-    #     make_barplot(x_df, labels, shap_values[:, :, 0], 
+    #     make_barplot(x_df, labels, shap_values[:, :, 0],
     #                 group, run, 'LinearExplainer', mlops='neptune')
     #     # Summary plot
-    #     make_summary_plot(x_df, shap_values[:, :, 0], group, run, 
+    #     make_summary_plot(x_df, shap_values[:, :, 0], group, run,
     #                     'LinearExplainer', mlops='neptune')
     #     make_beeswarm_plot(shap_values[:, :, 0], group, run,
     #                         'LinearExplainer', mlops='neptune')
@@ -327,9 +329,10 @@ def log_explainer(run, group, args_dict):
     #     # make_group_difference_plot(x_df.sum(1).to_numpy(), mask, group, run, 'LinearExplainer', mlops='neptune')
     #     make_bar_plot(x_df, shap_values[0], group, run,
     #                 'LinearExplainer', mlops='neptune')
-    #     make_force_plot(x_df, shap_values[0], x_df.columns, 
+    #     make_force_plot(x_df, shap_values[0], x_df.columns,
     #                     group, run, 'LinearExplainer', mlops='neptune')
     return run
+
 
 def log_kernel_explainer(model, x_df, misclassified, 
                          labels, group, run, cats, log_path):
@@ -366,7 +369,7 @@ def log_shap(run, args_dict):
     # explain all the predictions in the test set
     # explainer = shap.KernelExplainer(svc_linear.predict_proba, X_train[:100])
     os.makedirs(args_dict['log_path'], exist_ok=True)
-    for group in ['valid', 'test']:
+    for group in ['train', 'valid', 'test']:
         if group not in args_dict['inputs']:
             continue
         # X = args_dict['inputs'][group]
@@ -380,10 +383,11 @@ def log_shap(run, args_dict):
             print(f"Problem with logging {group}")
             # pass
         # log_kernel_explainer(ae, X_test_df, misclassified,
-        #                         best_lists[group]['labels'], group, run, 
+        #                         best_lists[group]['labels'], group, run,
         #                         best_lists[group]['labels'], log_path
         #                         )
         return run
+
 
 def save_images_and_csv3d(path, final, label, min_parent):
     os.makedirs(f"{path}/shap_csv3d/{min_parent}/", exist_ok=True)
@@ -393,6 +397,7 @@ def save_images_and_csv3d(path, final, label, min_parent):
     im.save(f"{path}/shap_images3d/{min_parent}/{label}.png")
     im.close()
     del im
+
 
 def make_images_shap(bins, shap_values, label, run, log_path):
     min_parent_mz = np.unique(np.array([float(x.split('_')[0]) for x in list(shap_values.index)]))
@@ -407,7 +412,7 @@ def make_images_shap(bins, shap_values, label, run, log_path):
 
     final = {min_parent: pd.DataFrame(
         np.zeros([int(np.ceil(bins['mz_max'] / bins['mz_bin'])) + 1,
-                    int(np.ceil(bins['rt_max'] / bins['rt_bin'])) + 1]),
+                  int(np.ceil(bins['rt_max'] / bins['rt_bin'])) + 1]),
         dtype=np.float32,
         columns=np.arange(0, bins['rt_max'] + bins['rt_bin'], bins['rt_bin']).round(
             bins['rt_rounding']),
@@ -436,7 +441,7 @@ def make_images_shap(bins, shap_values, label, run, log_path):
             mz = np.round(mz, bins['mz_rounding'])
         mz = np.round(float(mz), bins['mz_rounding'])
         rt = np.round(float(rt), bins['rt_rounding'])
-        
+
         final[min_parent].loc[mz].loc[rt] += intensity
     for i, min_parent in enumerate(list(final.keys())):
         df = np.stack(list(final[min_parent].values))

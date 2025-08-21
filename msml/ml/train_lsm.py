@@ -6,46 +6,36 @@ import neptune
 import pickle
 import numpy as np
 import pandas as pd
-from bernn.dl.models.pytorch.utils.utils import LogConfusionMatrix
+from bernn.dl.train.pytorch.utils.utils import LogConfusionMatrix
 from .utils import remove_zero_cols, scale_data, get_empty_lists, columns_stats_over0
 from .torch_utils import augment_data
 from .loggings import log_ord, log_fct, log_neptune
+# from sklearn_train_nocv import get_confusion_matrix, plot_roc
 from sklearn.metrics import matthews_corrcoef as MCC
 from sklearn.metrics import accuracy_score as ACC
 from .log_shap import log_shap
+# import matplotlib.pyplot as plt
+# import pipeline from sklearn
 from bernn.dl.train.train_ae import TrainAE
 from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold
-from bernn.dl.models.pytorch.utils.dataset import get_loaders_bacteria2
+# import xgboost
+from bernn.dl.train.pytorch.utils.dataset import get_loaders_bacteria
+# from bernn.ml.train.params_gp import linsvc_space
 from bernn.dl.train.train_ae_classifier_holdout import log_num_neurons
-from bernn.dl.models.pytorch.utils.utils import get_optimizer, get_empty_dicts, get_empty_traces, \
+# from bernn.utils.utils import scale_data
+from bernn.dl.train.pytorch.utils.utils import get_optimizer, get_empty_dicts, get_empty_traces, \
     log_traces, get_best_values, add_to_logger, add_to_neptune, add_to_mlflow
+# from torch import nn
 import torch
+# from sklearn.calibration import calibration_curve
 from .train import Train
-import random
-import torchvision.transforms as transforms
-from torchviz import make_dot
-import time
+from msml.ml.models.train_lsm import TrainLSM
 
 # from tensorboardX import SummaryWriter
 
 NEPTUNE_API_TOKEN = os.environ.get('NEPTUNE_API_TOKEN')
 NEPTUNE_PROJECT_NAME = "MSML-Bacteria"
 NEPTUNE_MODEL_NAME = 'MSMLBAC-'
-
-SEED = 42
-random.seed(SEED)
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-
-# Check if bfloat16 is supported
-use_bf16 = torch.cuda.is_available() and hasattr(torch.cuda, 'is_bf16_supported') and torch.cuda.is_bf16_supported()
-if use_bf16:
-    print("Using bfloat16 precision")
-else:
-    print("Using float32 precision")
 
 
 def get_size_in_mb(obj):
@@ -58,37 +48,13 @@ def score(predictions, labels):
     return ACC(labels, predictions)
 
 
-def move_urinespositives_to_group(all_data, batch_label, group):
-    # Find indices in urinespositives with the given batch_label in batches only
-    inds_to_move = np.where(all_data['batches_labels']['urinespositives'] == batch_label)[0]
-    if len(inds_to_move) == 0:
-        return all_data  # Nothing to do
-
-    for key in all_data.keys():
-        if 'urinespositives' in all_data[key] and group in all_data[key]:
-            if isinstance(all_data[key]['urinespositives'], pd.DataFrame):
-                row_labels = all_data[key]['urinespositives'].index[inds_to_move]
-                all_data[key][group] = pd.concat([
-                    all_data[key][group],
-                    all_data[key]['urinespositives'].loc[row_labels]
-                ])
-                all_data[key]['urinespositives'] = all_data[key]['urinespositives'].drop(row_labels)
-            else:
-                all_data[key][group] = np.concatenate([
-                    all_data[key][group],
-                    all_data[key]['urinespositives'][inds_to_move]
-                ])
-                all_data[key]['urinespositives'] = np.delete(all_data[key]['urinespositives'], inds_to_move)
-    return all_data
-
-
 class Train_bernn(TrainAE, Train):
     def __init__(self, name, model, data, uniques,
                  log_path, args, log_metrics, logger, log_neptune, mlops='None',
                  binary_path=None):
         # Initialize TrainAE first
         TrainAE.__init__(self, args, path=None, fix_thres=-1, load_tb=False, log_metrics=log_metrics,
-                         keep_models=False, log_inputs=False, log_plots=args.log_plots, log_tb=False,
+                         keep_models=False, log_inputs=False, log_plots=False, log_tb=False,
                          log_neptune=log_neptune, log_mlflow=False, groupkfold=args.groupkfold,
                          pools=False)
         # Initialize Train second
@@ -102,23 +68,14 @@ class Train_bernn(TrainAE, Train):
         self.train_after_warmup = True
         self.predict_tests = False
         self.best_mcc = -1
-        self.iter = 0
+        self.best_mccs = []  # Initialize best_mccs list
+        self.best_closses = []  # Initialize best_closses list
 
         self.complete_log_path = os.path.join(log_path, 'logs')
         os.makedirs(self.complete_log_path, exist_ok=True)
         os.makedirs('logs/ae', exist_ok=True)
-        self.best_loss = None
-        self.best_iteration = None
-        self.best_mccs = None  # Initialize best_mccs list
-        self.best_closses = None  # Initialize best_closses list
-
-    def init_train(self):
         self.best_loss = 1e10
         self.best_iteration = 0
-        self.best_mccs = []  # Initialize best_mccs list
-        self.best_closses = []  # Initialize best_closses list
-        self.h = 0
-        self.iter += 1
 
     def load_autoencoder(self):
         if not self.args.kan:
@@ -130,27 +87,13 @@ class Train_bernn(TrainAE, Train):
         self.ae = AutoEncoder
         self.shap_ae = SHAPAutoEncoder
 
-    def get_data(self, all_data):
-        # Ensure 'meta' and 'meta["all"]' exist in all_data
-        if 'meta' not in all_data or 'all' not in all_data['meta']:
-            all_data['meta'] = {'all': all_data['inputs']['all'].iloc[:, :2]}
-        # Ensure 'meta["urinespositives"]' exists if 'inputs["urinespositives"]' exists
-        if 'urinespositives' in all_data['inputs'] and (
-            'urinespositives' not in all_data['meta'] or
-            not isinstance(all_data['meta']['urinespositives'], pd.DataFrame)
-        ):
-            try:
-                all_data['meta']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[:, :2]
-                all_data['meta']['culturespures'] = all_data['inputs']['culturespures'].iloc[:, :2]
-            except Exception:
-                all_data['meta']['urinespositives'] = pd.DataFrame()
-                all_data['meta']['culturespures'] = pd.DataFrame()
+    def get_data(self, all_data, h):
         data = {}
-        info_keys = ['inputs', 'names', 'labels', 'cats', 'batches', 'meta',
+        info_keys = ['inputs', 'names', 'labels', 'cats', 'batches',
                      'batches_labels', 'manips', 'orders', 'sets', 'urines', 'concs']
         for info in info_keys:
             data[info] = {}
-            for group in ['train', 'valid', 'test', 'all', 'urinespositives', 'culturespures']:
+            for group in ['train', 'valid', 'test', 'all', 'urinespositives']:
                 data[info][group] = np.array([])
 
         if self.args.train_on == 'all':
@@ -161,12 +104,12 @@ class Train_bernn(TrainAE, Train):
                 )
                 train_nums = np.arange(0, len(all_data['labels']['all']))
                 splitter = skf.split(
-                    train_nums,
+                    train_nums, 
                     all_data['labels']['all'],
                     all_data['batches']['all']
                 )
             else:
-                skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
+                skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
                 train_nums = np.arange(0, len(all_data['labels']['all']))
                 splitter = skf.split(train_nums, all_data['labels']['all'])
 
@@ -178,25 +121,25 @@ class Train_bernn(TrainAE, Train):
                     all_data['labels']['urinespositives']
                 )
 
-            if self.h > 0 and self.h < self.args.n_repeats - 1:
-                for i in range(self.h):
+            if h > 0 and h < self.args.n_repeats - 1:
+                for i in range(h):
                     _, _ = splitter.__next__()
                 _, valid_inds = splitter.__next__()
                 _, test_inds = splitter.__next__()
                 if not self.args.groupkfold:
-                    for i in range(self.h):
+                    for i in range(h):
                         _, _ = splitter_upos.__next__()
                     _, valid_inds_upos = splitter_upos.__next__()
                     _, test_inds_upos = splitter_upos.__next__()
 
-            elif self.h == self.args.n_repeats - 1:
+            elif h == self.args.n_repeats - 1:
                 _, test_inds = splitter.__next__()
-                for i in range(self.h-1):
+                for i in range(h-1):
                     _, _ = splitter.__next__()
                 _, valid_inds = splitter.__next__()
                 if not self.args.groupkfold:
                     _, test_inds_upos = splitter_upos.__next__()
-                    for i in range(self.h-1):
+                    for i in range(h-1):
                         _, _ = splitter_upos.__next__()
                     _, valid_inds_upos = splitter_upos.__next__()
             else:
@@ -208,94 +151,97 @@ class Train_bernn(TrainAE, Train):
 
             train_inds = [x for x in train_nums if x not in np.concatenate((valid_inds, test_inds))]
 
+            # Create data dictionary with indices
+            # all_data['cats'] = {
+            #     'train': np.array([
+            # np.argwhere(label == self.unique_labels)[0][0] for label in all_data['labels']['all'][train_inds]]),
+            #     'valid': np.array([
+            # np.argwhere(label == self.unique_labels)[0][0] for label in all_data['labels']['all'][valid_inds]]),
+            #     'test': np.array([
+            # np.argwhere(label == self.unique_labels)[0][0] for label in all_data['labels']['all'][test_inds]])
+            # }
+            # all_data['meta'] = {
+            #     'train': all_data['inputs']['all'].iloc[train_inds, :2],
+            #     'valid': all_data['inputs']['all'].iloc[valid_inds, :2],
+            #     'test': all_data['inputs']['all'].iloc[test_inds, :2]
+            # }
             data = {
                 'inputs': {
                     'train': all_data['inputs']['all'].iloc[train_inds],
                     'valid': all_data['inputs']['all'].iloc[valid_inds],
                     'test': all_data['inputs']['all'].iloc[test_inds],
                     'all': all_data['inputs']['all'],
-                    'urinespositives': all_data['inputs']['urinespositives'],
-                    'culturespures': all_data['inputs']['culturespures']
+                    'urinespositives': all_data['inputs']['urinespositives']
                 },
                 'labels': {
                     'train': all_data['labels']['all'][train_inds],
                     'valid': all_data['labels']['all'][valid_inds],
                     'test': all_data['labels']['all'][test_inds],
                     'all': all_data['labels']['all'],
-                    'urinespositives': all_data['labels']['urinespositives'],
-                    'culturespures': all_data['labels']['culturespures']
+                    'urinespositives': all_data['labels']['urinespositives']
                 },
                 'batches': {
                     'train': all_data['batches']['all'][train_inds],
                     'valid': all_data['batches']['all'][valid_inds],
                     'test': all_data['batches']['all'][test_inds],
                     'all': all_data['batches']['all'],
-                    'urinespositives': all_data['batches']['urinespositives'],
-                    'culturespures': all_data['batches']['culturespures']
+                    'urinespositives': all_data['batches']['urinespositives']
                 },
                 'batches_labels': {
                     'train': all_data['batches_labels']['all'][train_inds],
                     'valid': all_data['batches_labels']['all'][valid_inds],
                     'test': all_data['batches_labels']['all'][test_inds],
                     'all': all_data['batches_labels']['all'],
-                    'urinespositives': all_data['batches_labels']['urinespositives'],
-                    'culturespures': all_data['batches_labels']['culturespures']
+                    'urinespositives': all_data['batches_labels']['urinespositives']
                 },
                 'names': {
                     'train': all_data['names']['all'][train_inds],
                     'valid': all_data['names']['all'][valid_inds],
                     'test': all_data['names']['all'][test_inds],
                     'all': all_data['names']['all'],
-                    'urinespositives': all_data['names']['urinespositives'],
-                    'culturespures': all_data['names']['culturespures']
+                    'urinespositives': all_data['names']['urinespositives']
                 },
                 'sets': {
                     'train': np.array(['train'] * len(train_inds)),
                     'valid': np.array(['valid'] * len(valid_inds)),
                     'test': np.array(['test'] * len(test_inds)),
                     'all': np.array(['all'] * len(all_data['inputs']['all'])),
-                    'urinespositives': np.array(['urinespositives'] * len(all_data['inputs']['urinespositives'])),
-                    'culturespures': np.array(['culturespures'] * len(all_data['inputs']['culturespures']))
+                    'urinespositives': np.array(['urinespositives'] * len(all_data['inputs']['urinespositives']))
                 },
                 'cats': {
                     'train': all_data['cats']['all'][train_inds],
                     'valid': all_data['cats']['all'][valid_inds],
                     'test': all_data['cats']['all'][test_inds],
                     'all': all_data['cats']['all'],
-                    'urinespositives': all_data['cats']['urinespositives'],
-                    'culturespures': all_data['cats']['culturespures']
+                    'urinespositives': all_data['cats']['urinespositives']
                 },
                 'meta': {
                     'train': all_data['meta']['all'].iloc[train_inds],
                     'valid': all_data['meta']['all'].iloc[valid_inds],
                     'test': all_data['meta']['all'].iloc[test_inds],
                     'all': all_data['meta']['all'],
-                    'urinespositives': all_data['meta']['urinespositives'],
-                    'culturespures': all_data['meta']['culturespures']
+                    'urinespositives': all_data['meta']['urinespositives']
                 },
                 'urines': {
                     'train': all_data['urines']['all'][train_inds],
                     'valid': all_data['urines']['all'][valid_inds],
                     'test': all_data['urines']['all'][test_inds],
                     'all': all_data['urines']['all'],
-                    'urinespositives': all_data['urines']['urinespositives'],
-                    'culturespures': all_data['urines']['culturespures']
+                    'urinespositives': all_data['urines']['urinespositives']
                 },
                 'concs': {
                     'train': all_data['concs']['all'][train_inds],
                     'valid': all_data['concs']['all'][valid_inds],
                     'test': all_data['concs']['all'][test_inds],
                     'all': all_data['concs']['all'],
-                    'urinespositives': all_data['concs']['urinespositives'],
-                    'culturespures': all_data['concs']['culturespures']
+                    'urinespositives': all_data['concs']['urinespositives']
                 },
                 'manips': {
                     'train': all_data['manips']['all'][train_inds],
                     'valid': all_data['manips']['all'][valid_inds],
                     'test': all_data['manips']['all'][test_inds],
                     'all': all_data['manips']['all'],
-                    'urinespositives': all_data['manips']['urinespositives'],
-                    'culturespures': all_data['manips']['culturespures']
+                    'urinespositives': all_data['manips']['urinespositives']
                 },
                 'inds': {
                     'train': train_inds,
@@ -470,6 +416,9 @@ class Train_bernn(TrainAE, Train):
                     all_data['urines']['urinespositives'],
                     b_inds
                 )
+                # all_data['sets']['urinespositives'] = np.array([
+                # 'urinespositives' for _ in all_data['names']['urinespositives']
+                # ])
                 all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].loc[
                     all_data['names']['urinespositives'], :
                 ]
@@ -543,7 +492,7 @@ class Train_bernn(TrainAE, Train):
             }
 
             # Split blanc samples
-            skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=self.h)
+            skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=h)
             blanc_nums = np.arange(0, len(data['labels']['blanc']))
             splitter = skf.split(blanc_nums, data['labels']['blanc'], data['batches']['blanc'])
             blanc_train_inds, blanc_valid_inds = splitter.__next__()
@@ -578,7 +527,7 @@ class Train_bernn(TrainAE, Train):
             data['inds']['blanc_valid'] = blanc_valid_inds
 
             # Split validation into validation and test
-            skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=self.h)
+            skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=h)
             valid_nums = np.arange(0, len(data['labels']['valid']))
             splitter = skf.split(valid_nums, data['labels']['valid'], data['batches']['valid'])
             test_inds, valid_inds = splitter.__next__()
@@ -635,7 +584,7 @@ class Train_bernn(TrainAE, Train):
             }
 
             # Split blanc samples
-            skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=self.h)
+            skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=h)
             blanc_nums = np.arange(0, len(data['labels']['blanc']))
             splitter = skf.split(blanc_nums, data['batches']['blanc'], data['batches']['blanc'])
             blanc_train_inds, blanc_valid_inds = splitter.__next__()
@@ -670,7 +619,7 @@ class Train_bernn(TrainAE, Train):
             data['inds']['blanc_valid'] = blanc_valid_inds
 
             # Split validation into validation and test
-            skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=self.h)
+            skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=h)
             valid_nums = np.arange(0, len(data['labels']['valid']))
             splitter = skf.split(valid_nums, data['batches']['valid'], data['batches']['valid'])
             test_inds, valid_inds = splitter.__next__()
@@ -693,16 +642,11 @@ class Train_bernn(TrainAE, Train):
             data['inds']['valid'] = valid_inds
 
         unique_labels = np.unique(data['labels']['all'])
-        unique_labels = np.concatenate((
-            ["blanc"],
-            unique_labels[unique_labels != "blanc"]
-        ))
         unique_batches = np.unique(np.concatenate((data['batches']['all'], data['batches']['urinespositives'])))
         return data, unique_labels, unique_batches
 
-    def train_bernn(self, all_data, params, run):
+    def train_bernn(self, all_data, h, params, run):
         # TODO these params should not be set here
-
         metrics = {}
         self.best_mcc = -1
         self.warmup_counter = 0
@@ -711,11 +655,7 @@ class Train_bernn(TrainAE, Train):
         # params['warmup'] = 30       print(self.foldername)
         warmup = True
         self.columns = all_data['inputs']['all'].columns
-        if 'minmax' not in params['scaler'] and self.args.use_sigmoid:
-            print('is_sigmoid can only be used with minmax scaler')
-            self.args.use_sigmoid = 0
-        if self.args.train_after_warmup:
-            params['nu'] = 1
+        h += 1
         self.make_samples_weights()
 
         # Transform the data with the chosen scaler
@@ -727,13 +667,10 @@ class Train_bernn(TrainAE, Train):
         for g in list(data['inputs'].keys()):
             data['inputs'][g] = data['inputs'][g].round(4)
         # Gets all the pytorch dataloaders to train the models
-        # Increase num_workers for faster data loading (adjust based on your CPU cores)
-        loaders = get_loaders_bacteria2(data, self.args.random_recs, self.samples_weights, self.args.dloss,
-                                        None, None, bs=self.args.bs, num_workers=self.args.num_workers,
-                                        add_noise=self.args.add_noise, normalize=self.args.normalize)
+        loaders = get_loaders_bacteria(data, self.args.random_recs, self.samples_weights, self.args.dloss,
+                                       None, None, bs=self.args.bs)
 
         ae = self.ae(data['inputs']['all'].shape[1],
-                     is_sigmoid=self.args.use_sigmoid,
                      n_batches=self.n_batches,
                      nb_classes=self.n_cats,
                      mapper=self.args.use_mapping,
@@ -743,12 +680,11 @@ class Train_bernn(TrainAE, Train):
                      n_emb=self.args.embeddings_meta,
                      dropout=params['dropout'],
                      variational=self.args.variational, conditional=False,
-                     zinb=self.args.zinb, add_noise=self.args.add_noise,
-                     tied_weights=self.args.tied_weights,
+                     zinb=self.args.zinb, add_noise=0, tied_weights=self.args.tied_weights,
                      use_gnn=0,  # TODO to remove
                      device=self.args.device,
                      prune_threshold=self.args.prune_threshold,
-                     update_grid=self.args.update_grid,
+                     update_grid=self.args.update_grid
                      ).to(self.args.device)
         ae.mapper.to(self.args.device)
         ae.dec.to(self.args.device)
@@ -769,32 +705,14 @@ class Train_bernn(TrainAE, Train):
                                device=self.args.device).to(self.args.device)
         shap_ae.mapper.to(self.args.device)
         shap_ae.dec.to(self.args.device)
-        
-        if use_bf16 and torch.cuda.is_available() and hasattr(torch.cuda, 'is_bf16_supported') and torch.cuda.is_bf16_supported():
-            ae = ae.to(dtype=torch.bfloat16)
-            shap_ae = shap_ae.to(dtype=torch.bfloat16)
-            print("Converted main autoencoder to bfloat16")        
-        
         sceloss, celoss, mseloss, triplet_loss = self.get_losses(
             params['scaler'], params['smoothing'], params['margin'], self.args.dloss
         )
 
         optimizer_ae = get_optimizer(ae, params['lr'], params['wd'], 'adam')
-        lr_scheduler_ae = get_lr_scheduler(optimizer_ae, params['lr'], self.args.warmup, 
-                                           loader=loaders['all'], 
-                                           scheduler_type=self.args.scheduler,
-                                           verbose=True)
-        if self.args.train_after_warmup:
-            optimizer_c = get_optimizer(ae, params['lr'], params['wd'], 'adam')
-        else:
-            optimizer_c = get_optimizer(ae.classifier, params['lr'], params['wd'], 'adam')
-        lr_scheduler_c = get_lr_scheduler(optimizer_c, params['lr'], self.args.n_epochs, 
-                                          loader=loaders['train'], 
-                                          scheduler_type=self.args.scheduler,
-                                          verbose=True)
-        optimizer_b = get_optimizer(ae.dann_discriminator, params['lr'], 0, 'adam')
 
         # Used only if bdisc==1
+        optimizer_b = get_optimizer(ae.dann_discriminator, 1e-2, 0, 'adam')
 
         # self.hparams_names = [x.name for x in linsvc_space]
         if self.log_inputs and not self.logged_inputs:
@@ -813,45 +731,16 @@ class Train_bernn(TrainAE, Train):
         early_stop_counter = 0
         best_vals = values
         loggers = {'cm_logger': LogConfusionMatrix(self.complete_log_path)}
-        if self.h > 0:  # or warmup_counter == 100:
+        if h > 1:  # or warmup_counter == 100:
             ae.load_state_dict(torch.load(f'{self.complete_log_path}/warmup.pth'))
             print("\n\nNO WARMUP\n\n")
-        times = []
-        if self.h == 0:
+        if h == 1:
             for epoch in range(0, self.args.warmup):
-                start = time.time()
-                with torch.autocast(device_type='cuda', dtype=torch.bfloat16 if use_bf16 else torch.float32):
-                    no_error, ae, warmup = self.warmup_loop(optimizer_ae, lr_scheduler_ae, ae, celoss,
-                                                            loaders['all'], triplet_loss, mseloss,
-                                                            warmup, epoch, optimizer_b, values, loggers,
-                                                            loaders, run, self.args.use_mapping)
-                times += [time.time() - start]
-                if not no_error or not warmup:
+                no_error, ae = self.warmup_loop(optimizer_ae, ae, celoss, loaders['all'], triplet_loss, mseloss,
+                                                warmup, epoch, optimizer_b, values, loggers, loaders, run,
+                                                self.args.use_mapping)
+                if not no_error:
                     break
-            run['time_epoch_warmup_avg'] = np.mean(times)
-            # generate a model architecture visualization
-            X = torch.tensor(all_data['inputs']['all'].values, device=self.args.device, dtype=torch.bfloat16)
-            y = ae.enc(X)
-            make_dot(y,
-                        params=dict(ae.enc.named_parameters()),
-                        show_attrs=True,
-                        show_saved=True).render("encoder_torchviz", format="png")
-            y = ae(X, X, mapping=False)
-            make_dot(y[1]['mean'].mean(0),
-                        params=dict(ae.named_parameters()),
-                        show_attrs=True,
-                        show_saved=True).render("ae_torchviz", format="png")
-            run["model/encoder_torchviz"].upload("encoder_torchviz.png")
-            run["model/ae_torchviz"].upload("ae_torchviz.png")
-            
-            # Generate a model architecture visualization for domain discriminator
-            y = ae.dann_discriminator(ae.enc(X))
-            make_dot(y.mean(0),
-                        params=dict(ae.dann_discriminator.named_parameters()),
-                        show_attrs=True,
-                        show_saved=True).render("dann_discriminator_torchviz", format="png")
-            run["model/dann_discriminator_torchviz"].upload("dann_discriminator_torchviz.png")
-
         for epoch in range(0, self.args.n_epochs):
             if early_stop_counter == self.args.early_stop:
                 if self.verbose > 0:
@@ -864,24 +753,15 @@ class Train_bernn(TrainAE, Train):
             values['urinespositives'] = values['test']
 
             if self.args.warmup_after_warmup:
-                with torch.autocast(device_type='cuda', dtype=torch.bfloat16 if use_bf16 else torch.float32):
-                    no_error, ae, warmup = self.warmup_loop(optimizer_ae, lr_scheduler_ae, ae, celoss, loaders['all'],
-                                                    triplet_loss, mseloss, 0, epoch, optimizer_b,
-                                                    values, loggers, loaders, run, self.args.use_mapping)
+                no_error, ae = self.warmup_loop(optimizer_ae, ae, celoss, loaders['all'], triplet_loss, mseloss,
+                                                0, epoch,
+                                                optimizer_b, values, loggers, loaders, run, self.args.use_mapping)
                 if not no_error:
                     break
             if not self.args.train_after_warmup:
                 ae = self.freeze_all_but_clayers(ae)
-
-            if self.args.rec_prototype:
-                with torch.autocast(device_type='cuda', dtype=torch.bfloat16 if use_bf16 else torch.float32):
-                    closs = self.loop2('train', optimizer_c, ae, lr_scheduler_c,
-                                            {'mseloss': mseloss, 'celoss': sceloss},
-                                            loaders['train'], lists, traces, nu=params['nu'])
-            else:
-                with torch.autocast(device_type='cuda', dtype=torch.bfloat16 if use_bf16 else torch.float32):
-                    closs, _, _ = self.loop('train', optimizer_c, ae, sceloss,
-                                            loaders['train'], lists, traces, nu=params['nu'])
+            closs, _, _ = self.loop('train', optimizer_ae, ae, sceloss,
+                                    loaders['train'], lists, traces, nu=params['nu'])
 
             if torch.isnan(closs):
                 print("NAN LOSS")
@@ -892,14 +772,12 @@ class Train_bernn(TrainAE, Train):
             # Below is the loop for all sets
             with torch.no_grad():
                 for group in list(data['inputs'].keys()):
-                    if group in ['all', 'all_pool', 'culturespures']:
+                    if group in ['all', 'all_pool']:
                         continue
-                    with torch.autocast(device_type='cuda', dtype=torch.bfloat16 if use_bf16 else torch.float32):
-                        closs, lists, traces = self.loop(group, optimizer_c, ae, sceloss,
-                                                         loaders[group], lists, traces, nu=0)
-                with torch.autocast(device_type='cuda', dtype=torch.bfloat16 if use_bf16 else torch.float32):
-                    closs, _, _ = self.loop('train', optimizer_c, ae, sceloss,
-                                            loaders['train'], lists, traces, nu=0)
+                    closs, lists, traces = self.loop(group, optimizer_ae, ae, sceloss,
+                                                     loaders[group], lists, traces, nu=0)
+                closs, _, _ = self.loop('train', optimizer_ae, ae, sceloss,
+                                        loaders['train'], lists, traces, nu=0)
 
             traces = self.get_mccs(lists, traces)
             values.pop('all_pool', None)
@@ -913,8 +791,6 @@ class Train_bernn(TrainAE, Train):
             traces.pop('test_pool', None)
             traces.pop('urinespositives_pool', None)
             values = log_traces(traces, values)
-            if self.args.scheduler == 'ReduceLROnPlateau':
-                lr_scheduler_c.step(values['valid']['closs'][-1])
             # Remove pool metrics
             if self.log_tb:
                 try:
@@ -922,21 +798,21 @@ class Train_bernn(TrainAE, Train):
                 except Exception as e:
                     print(f"Problem with add_to_logger: {e}")
             if self.log_neptune:
-                add_to_neptune(values, run)
+                add_to_neptune(run, values)
             if self.log_mlflow:
                 add_to_mlflow(values, epoch)
             if np.mean(values['valid']['mcc'][-self.args.n_agg:]) > self.best_mcc and len(
                     values['valid']['mcc']) >= self.args.n_agg:
                 print(f"Best Classification Mcc Epoch {epoch}, "
-                      f"Acc: {values['test']['acc'][-1]} "
-                      f"VALID Mcc: {values['valid']['mcc'][-1]} "
-                      f"TEST Mcc: {values['test']['mcc'][-1]} "
+                      f"Acc: {values['test']['acc'][-1]}"
+                      f"VALID Mcc: {values['valid']['mcc'][-1]}"
+                      f"TEST Mcc: {values['test']['mcc'][-1]}"
                       f"Classification train loss: {values['train']['closs'][-1]},"
                       f" valid loss: {values['valid']['closs'][-1]},"
                       f" test loss: {values['test']['closs'][-1]}")
                 self.best_mcc = np.mean(values['valid']['mcc'][-self.args.n_agg:])
-                torch.save(ae.state_dict(), f'{self.complete_log_path}/model_{self.h}_state.pth')
-                torch.save(ae, f'{self.complete_log_path}/model_{self.h}.pth')
+                torch.save(ae.state_dict(), f'{self.complete_log_path}/model_{h}_state.pth')
+                torch.save(ae, f'{self.complete_log_path}/model_{h}.pth')
                 best_values = get_best_values(values.copy(), ae_only=False, n_agg=self.args.n_agg)
                 best_vals = values.copy()
                 # best_vals['rec_loss'] = self.best_loss
@@ -969,23 +845,13 @@ class Train_bernn(TrainAE, Train):
                 early_stop_counter += 1
 
             if self.args.predict_tests and (epoch % 10 == 0):
-                loaders = get_loaders_bacteria2(all_data, data, self.args.random_recs, self.args.triplet_dloss, ae,
-                                                ae.classifier, bs=self.args.bs, num_workers=self.args.num_workers,
-                                                add_noise=self.args.add_noise)  # Add num_workers here too
+                loaders = get_loaders_bacteria(all_data, data, self.args.random_recs, self.args.triplet_dloss, ae,
+                                               ae.classifier, bs=self.args.bs)
             if self.args.prune_threshold > 0:
                 n_neurons = ae.prune_model_paperwise(False, False, weight_threshold=self.args.prune_threshold)
                 # If save neptune is True, save the model
                 if self.log_neptune:
                     log_num_neurons(run, n_neurons, init_n_neurons)
-
-        # Generate a model architecture visualization
-        X = torch.tensor(data['inputs']['all'].values, device=self.args.device, dtype=torch.bfloat16)
-        enc = ae.enc(X)
-        y = ae.classifier(enc)
-        # try:
-        #     run["model/classifier_torchviz"].upload("classifier_torchviz.png")
-        # except Exception as e:
-        #     print(f"Error uploading classifier_torchviz.png: {e}")
 
         self.best_mccs += [self.best_mcc]
         self.best_closses += [self.best_closs]
@@ -996,14 +862,14 @@ class Train_bernn(TrainAE, Train):
         traces['urinespositives'] = traces['test']
 
         # Verify the model exists
-        if not os.path.exists(f'{self.complete_log_path}/model_{self.h}_state.pth'):
+        if not os.path.exists(f'{self.complete_log_path}/model_{h}_state.pth'):
             return -1
 
         # Loading best model that was saved during training
-        ae.load_state_dict(torch.load(f'{self.complete_log_path}/model_{self.h}_state.pth'))
+        ae.load_state_dict(torch.load(f'{self.complete_log_path}/model_{h}_state.pth'))
         # Need another model because the other cant be use to get shap values
-        if self.h == 1:
-            shap_ae.load_state_dict(torch.load(f'{self.complete_log_path}/model_{self.h}_state.pth'))
+        if h == 1:
+            shap_ae.load_state_dict(torch.load(f'{self.complete_log_path}/model_{h}_state.pth'))
         # ae.load_state_dict(sd)
         ae.eval()
         shap_ae.eval()
@@ -1011,19 +877,18 @@ class Train_bernn(TrainAE, Train):
         shap_ae.mapper.eval()
         with torch.no_grad():
             for group in list(data['inputs'].keys()):
-                if group in ['culturespures']:
-                    continue
-                with torch.autocast(device_type='cuda', dtype=torch.bfloat16 if use_bf16 else torch.float32):
-                    closs, best_lists, traces = self.loop(group, None, ae, sceloss,
-                                                          loaders[group], best_lists, traces, nu=0, mapping=False)
+                # if group in ['all', 'all_pool']:
+                #     continue
+                closs, best_lists, traces = self.loop(group, None, ae, sceloss,
+                                                      loaders[group], best_lists, traces, nu=0, mapping=False)
         self.log_rep(best_lists, best_vals, best_values, traces, metrics, run, loggers, ae,
-                     shap_ae, self.h, epoch)
+                     shap_ae, h, epoch)
         return ae
 
     def train(self, h_params):
-        self.init_train()
         best_iteration = []
         metrics = {}
+        self.iter += 1
         features_cutoff = None
         param_grid = {}
         scaler_name = 'none'
@@ -1045,22 +910,9 @@ class Train_bernn(TrainAE, Train):
                 p = param
             elif name == 'g':
                 g = param
-            elif name in self.args:
-                setattr(self.args, name, param)
             else:
                 param_grid[name] = param
-        # Change init of variable so that it doesnt try to optimize options not used
-        if not self.args.use_threshold:
-            threshold = 0
-        if not self.args.use_smoothing:
-            hparams['smoothing'] = param_grid['smoothing'] = 0
-        if not hparams['use_l1']:
-            hparams['l1'] = param_grid['l1'] = 0
-        if not hparams['use_dropout']:
-            hparams['dropout'] = param_grid['dropout'] = 0
-        if 'prune_threshold' not in hparams:
-            hparams['prune_threshold'] = param_grid['prune_threshold'] = 0
-        hparams['threshold'] = param_grid['threshold'] = threshold
+        hparams['threshold'] = param_grid['threshold'] = threshold = 0
         other_params = {
             'p': p,
             'g': g,
@@ -1100,6 +952,9 @@ class Train_bernn(TrainAE, Train):
         if threshold > 0:
             not_zeros_col = remove_zero_cols(all_data['inputs']['all'], threshold)
             all_data['inputs']['all'] = all_data['inputs']['all'].iloc[:, not_zeros_col]
+            all_data['inputs']['train'] = all_data['inputs']['train'].iloc[:, not_zeros_col]
+            all_data['inputs']['valid'] = all_data['inputs']['valid'].iloc[:, not_zeros_col]
+            all_data['inputs']['test'] = all_data['inputs']['test'].iloc[:, not_zeros_col]
             all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[:, not_zeros_col]
 
         if self.log_neptune:
@@ -1116,9 +971,6 @@ class Train_bernn(TrainAE, Train):
                               "**/*.py"
                               ],
             )  # your credentials
-            run['early_warmup_stop'] = self.args.early_warmup_stop
-            run['early_stop'] = self.args.early_stop
-            run['fast_hparams_optim'] = self.args.fast_hparams_optim
             run['warmup_after_warmup'] = self.args.warmup_after_warmup
             run['train_after_warmup'] = self.args.train_after_warmup
             run["hparams"] = hparams
@@ -1142,6 +994,7 @@ class Train_bernn(TrainAE, Train):
             run["n_features"] = self.args.n_features
             run["total_features"] = all_data['inputs']['all'].shape[1]
             run["ms_level"] = self.args.ms_level
+            run["log"] = self.args.log
             run["batches"] = '-'.join(self.uniques['batches'])
             run["context"] = 'train'
             run["remove_bad_samples"] = self.args.remove_bad_samples
@@ -1149,83 +1002,126 @@ class Train_bernn(TrainAE, Train):
             run["sparse_matrix"] = self.args.sparse_matrix
             run["max_bin"] = self.args.max_bin
             run["device"] = self.args.device
-            run["num_workers"] = self.args.num_workers
-            run['bs'] = self.args.bs
-            run['use_mapping'] = self.args.use_mapping
-            run['max_warmup'] = self.args.max_warmup
-            run['add_noise'] = self.args.add_noise
-            run['normalize'] = self.args.normalize
-            run['use_sigmoid'] = self.args.use_sigmoid
-            run['n_epochs'] = self.args.n_epochs
-            run['ae_layers_max_neurons'] = self.args.ae_layers_max_neurons
-            run['threshold'] = self.args.threshold
-            run['dloss'] = self.args.dloss
-            run['variational'] = self.args.variational
-            run['zinb'] = self.args.zinb
-            run['use_dropout'] = hparams['use_dropout']
-            run['dropout'] = hparams['dropout']
-            run['n_layers'] = self.args.n_layers
-            run['xgboost_features'] = self.args.xgboost_features
-            run['clip_val'] = self.args.clip_val
-            run['scheduler'] = self.args.scheduler
-            run['use_bf16'] = use_bf16
-            run['tied_weights'] = self.args.tied_weights
-            run['use_mapping'] = self.args.use_mapping
-            run['prune_threshold'] = self.args.prune_threshold
-            run['use_l1'] = self.args.use_l1
-            run['classif_loss'] = self.args.classif_loss
-            run['recon_loss'] = self.args.rec_loss
-            run['mode'] = self.args.mode
+
         else:
             run = None
 
         ord_path = f"{'/'.join(self.log_path.split('/')[:-1])}/ords/"
         os.makedirs(ord_path, exist_ok=True)
         if self.args.log_plots:
-            log_ord(data=all_data, uniques=self.uniques, path=ord_path, scaler_name=scaler_name, step_name='inputs_all', run=run)
+            log_ord(all_data, self.uniques, ord_path, scaler_name, run)
         data = copy.deepcopy(all_data)
-        metrics = log_fct(data, 'inputs', metrics)
+        metrics = log_fct(data, scaler_name, metrics)
         if self.args.log_plots:
-            log_ord(data, self.uniques2, ord_path, f'{scaler_name}_blancs', 'inputs_blancs', run)
+            log_ord(data, self.uniques2, ord_path, f'{scaler_name}_blancs', run)
 
         all_data, scaler = scale_data(scaler_name, all_data)
 
-        # We will take the data from the batch culturespures and make it its own key
-        # Extract indices for culturespures in the 'all' set
-        culturespures_inds = np.where(all_data['batches_labels']['all'] == 'culturespures')[0]
-
-        # For each key, add a 'culturespures' entry
-        for key in all_data.keys():
-            if 'all' in all_data[key]:
-                if isinstance(all_data[key]['all'], pd.DataFrame):
-                    all_data[key]['culturespures'] = all_data[key]['all'].iloc[culturespures_inds]
-                    # Remove culturespures samples from 'all'
-                    all_data[key]['all'] = all_data[key]['all'].drop(all_data[key]['all'].index[culturespures_inds])
-                else:
-                    all_data[key]['culturespures'] = all_data[key]['all'][culturespures_inds]
-                    # Remove culturespures samples from 'all'
-                    all_data[key]['all'] = np.delete(all_data[key]['all'], culturespures_inds)
-        # Should not have ANY batch_label that is either urinespositives or bpatients
-        # Assert that 'all' group in batches_labels does not contain 'urinespositives' or 'bpatients'
-        assert not (
-            ('urinespositives' in all_data['batches_labels']['all']) or
-            ('bpatients' in all_data['batches_labels']['all'])
-        ), (
-            "'all' group in batches_labels still contains 'urinespositives' or 'bpatients' after filtering!"
-        )
-
         # Basically just takes the samples back into training
         if all_data['inputs']['urinespositives'].shape[0] > 0:
-            # Example: move b10 and bpatients from urinespositives to all
-            print("Before move:", np.unique(all_data['batches']['urinespositives']))
-            all_data = move_urinespositives_to_group(all_data, 'b10', 'all')
-            print("After move:", np.unique(all_data['batches']['urinespositives']))
-            print("Batches_labels after move:", np.unique(all_data['batches_labels']['urinespositives']))
-            # You can add more batch labels as needed
-            # Keep only eco, kpn, sag in urinespositives
+            # Keep only eco
             from collections import Counter
             print(Counter(all_data['labels']['urinespositives']))
-            print(Counter(all_data['batches_labels']['urinespositives']))
+            inds_to_keep = np.argwhere(np.isin(all_data['labels']['urinespositives'], ['eco', 'kpn', 'sag'])).flatten()
+
+            for k in all_data.keys():
+                if k == 'inputs':
+                    pass
+                # elif k == 'sets':
+                #     all_data[k]['urinespositives'] = ['urinespositives' for _ in range(len(inds_to_keep))]
+                else:
+                    all_data[k]['urinespositives'] = all_data[k]['urinespositives'][inds_to_keep]
+            all_data['inputs']['urinespositives'] =\
+                all_data['inputs']['urinespositives'].loc[all_data['names']['urinespositives'], :]
+            # all_data['urines']['urinespositives'] = all_data['urines']['urinespositives'][inds_to_keep]
+            # all_data['concs']['urinespositives'] = all_data['concs']['urinespositives'][inds_to_keep]
+            # all_data['manips']['urinespositives'] = all_data['manips']['urinespositives'][inds_to_keep]
+            all_data['meta'] = {'urinespositives': all_data['inputs']['urinespositives'].iloc[:, :2]}
+            all_data['cats'] = {'urinespositives': np.array([
+                np.argwhere(label == self.unique_labels)[0][0] for label in all_data['labels']['urinespositives']
+            ])}
+            # all_data['sets'] = {'urinespositives': np.array(['urinespositives' for _ in range(len(inds_to_keep))])}
+            print(Counter(all_data['labels']['urinespositives']))
+            if self.args.groupkfold:
+                b10_inds = np.argwhere(
+                    all_data['batches']['urinespositives'] == np.argwhere(
+                        self.uniques['batches'] == 'b10'
+                    )[0][0]
+                ).flatten()
+                bpatients = np.argwhere(all_data['batches']['urinespositives'] == np.argwhere(
+                        self.uniques['batches'] == 'bpatients'
+                )[0][0]).flatten()
+                b_inds = np.concatenate((b10_inds, bpatients))
+                urines10 = np.array([x.split('_')[-2] for x in all_data['names']['urinespositives'][b_inds]])
+                # Make sure the labels are the good ones in the names and inputs labels
+                all_data['inputs']['all'] = pd.concat((
+                    all_data['inputs']['all'], all_data['inputs']['urinespositives'].iloc[b_inds]
+                ))
+                all_data['labels']['all'] = np.concatenate((
+                    all_data['labels']['all'], all_data['labels']['urinespositives'][b_inds]
+                ))
+                all_data['batches']['all'] = np.concatenate((
+                    all_data['batches']['all'], all_data['batches']['urinespositives'][b_inds]
+                ))
+                all_data['names']['all'] = np.concatenate((
+                    all_data['names']['all'], all_data['names']['urinespositives'][b_inds]
+                ))
+                all_data['manips']['all'] = np.concatenate((
+                    all_data['manips']['all'], all_data['manips']['urinespositives'][b_inds]
+                ))
+                all_data['urines']['all'] = np.concatenate((
+                    all_data['urines']['all'], all_data['urines']['urinespositives'][b_inds]
+                ))
+                all_data['concs']['all'] = np.concatenate((
+                    all_data['concs']['all'], all_data['concs']['urinespositives'][b_inds]
+                ))
+                all_data['batches_labels']['all'] = np.concatenate((
+                    all_data['batches_labels']['all'], all_data['batches_labels']['urinespositives'][b_inds]
+                ))
+                # all_data['sets']['all'] = np.concatenate((
+                #     np.array(['all'] * all_data['inputs']['all'].shape[0]),
+                #     np.array(['urinespositives'] * all_data['inputs']['urinespositives'].shape[0])[b_inds]
+                # ))
+                all_data['meta']['all'] = all_data['inputs']['all'].iloc[:, :2]
+                all_data['cats']['all'] = np.array([
+                        np.argwhere(label == self.unique_labels)[0][0] for label in all_data['labels']['all']
+                ])
+
+                # Remove b10 and bpatients from urinespositives
+                all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].drop(
+                    all_data['inputs']['urinespositives'].index[b_inds]
+                )
+                all_data['meta']['urinespositives'] = all_data['meta']['urinespositives'].drop(
+                    all_data['meta']['urinespositives'].index[b_inds]
+                )
+                all_data['labels']['urinespositives'] = np.delete(all_data['labels']['urinespositives'], b_inds)
+                all_data['batches']['urinespositives'] = np.delete(all_data['batches']['urinespositives'], b_inds)
+                all_data['batches_labels']['urinespositives'] = np.delete(
+                    all_data['batches_labels']['urinespositives'],
+                    b_inds
+                )
+                all_data['names']['urinespositives'] = np.delete(all_data['names']['urinespositives'], b_inds)
+                all_data['manips']['urinespositives'] = np.delete(all_data['manips']['urinespositives'], b_inds)
+                # all_data['concs']['urinespositives'] = np.delete(all_data['concs']['urinespositives'], b_inds)
+                # all_data['sets']['urinespositives'] = np.delete(all_data['sets']['urinespositives'], b_inds)
+                all_data['cats']['urinespositives'] = np.delete(all_data['cats']['urinespositives'], b_inds)
+                # Remove urines10 from urinespositives because duplicated
+                inds_to_keep = np.array([
+                    i for i, x in enumerate(all_data['names']['urinespositives']) if x.split('_')[-2] not in urines10
+                ])
+                all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[inds_to_keep]
+                all_data['labels']['urinespositives'] = all_data['labels']['urinespositives'][inds_to_keep]
+                all_data['batches']['urinespositives'] = all_data['batches']['urinespositives'][inds_to_keep]
+                all_data['names']['urinespositives'] = all_data['names']['urinespositives'][inds_to_keep]
+                # all_data['concs']['urinespositives'] = all_data['concs']['urinespositives'][inds_to_keep]
+                # all_data['sets']['urinespositives'] = all_data['sets']['urinespositives'][inds_to_keep]
+                all_data['cats']['urinespositives'] = all_data['cats']['urinespositives'][inds_to_keep]
+                all_data['meta']['urinespositives'] = all_data['meta']['urinespositives'].iloc[inds_to_keep]
+            else:
+                all_data['cats']['all'] = np.array([
+                    np.argwhere(label == self.unique_labels)[0][0] for label in all_data['labels']['all']
+                ])
+                all_data['meta']['all'] = all_data['inputs']['all'].iloc[:, :2]
 
         infos = {
             'scaler': scaler_name,
@@ -1257,186 +1153,129 @@ class Train_bernn(TrainAE, Train):
 
         print(f'Iteration: {self.iter}')
         # models = []
+        h = 0
 
-        hparams['disc_b_warmup'] = 0
-        hparams = self.make_params(hparams)
+        h_params['disc_b_warmup'] = 0
+        h_params = self.make_params(h_params)
         os.makedirs(self.complete_log_path, exist_ok=True)
-        if self.args.groupkfold and not self.args.test and not self.args.fast_hparams_optim:
+        if self.args.groupkfold and not self.args.test:
             self.args.n_repeats = len(np.unique(all_data['batches']['all']))
-        elif self.args.test or self.args.fast_hparams_optim:
+        elif self.args.test:
             self.args.n_repeats = 1
-        offset = 0
-        while self.h < self.args.n_repeats + offset:
-            print(f'Fold: {self.h}')
-            all_data, self.unique_labels, _ = self.get_data(all_data)
-            if self.args.n_repeats == 1 and np.unique(all_data['batches_labels']['test']) != 'b11':
-                self.h += 1
-                offset += 1
-                continue
-            elif self.args.n_repeats == 1 and np.unique(all_data['batches_labels']['test']) == 'b11':
-                self.h = 0
-                offset = 0
-            all_data2 = move_urinespositives_to_group(all_data, 'bpatients', 'train')
-            self.unique_batches = self.uniques['batches']
-            from collections import Counter
-            print(Counter(all_data2['labels']['urinespositives']))
-            print(Counter(all_data2['batches_labels']['urinespositives']))
+        while h < self.args.n_repeats:
+            print(f'Fold: {h}')
 
-            lists['inds']['train'] += [all_data2['inds']['train']]
-            lists['inds']['valid'] += [all_data2['inds']['valid']]
-            lists['inds']['test'] += [all_data2['inds']['test']]
+            all_data, self.unique_labels, self.unique_batches = self.get_data(all_data, h)
 
-            lists['names']['train'] += [all_data2['names']['train']]
-            lists['names']['valid'] += [all_data2['names']['valid']]
-            lists['names']['test'] += [all_data2['names']['test']]
+            lists['inds']['train'] += [all_data['inds']['train']]
+            lists['inds']['valid'] += [all_data['inds']['valid']]
+            lists['inds']['test'] += [all_data['inds']['test']]
 
-            lists['batches']['train'] += [all_data2['batches']['train']]
-            lists['batches']['valid'] += [all_data2['batches']['valid']]
-            lists['batches']['test'] += [all_data2['batches']['test']]
-            lists['batches_labels']['train'] += [all_data2['batches_labels']['train']]
-            lists['batches_labels']['valid'] += [all_data2['batches_labels']['valid']]
-            lists['batches_labels']['test'] += [all_data2['batches_labels']['test']]
-            lists['unique_batches']['train'] += [list(np.unique(all_data2['batches']['train']))]
-            lists['unique_batches']['valid'] += [list(np.unique(all_data2['batches']['valid']))]
-            lists['unique_batches']['test'] += [list(np.unique(all_data2['batches']['test']))]
+            lists['names']['train'] += [all_data['names']['train']]
+            lists['names']['valid'] += [all_data['names']['valid']]
+            lists['names']['test'] += [all_data['names']['test']]
 
-            print(f"Batches. Train: {np.unique(all_data2['batches_labels']['train'])},"
-                  f"Valid: {np.unique(all_data2['batches_labels']['valid'])},"
-                  f"Test: {np.unique(all_data2['batches_labels']['test'])}")
-            # print bact in valid and test set to verify its actually the correct batch being tested
-            print(f"Valid: {np.unique(all_data2['labels']['valid'])}")
-            print(f"Test: {np.unique(all_data2['labels']['test'])}")
+            lists['batches']['train'] += [all_data['batches']['train']]
+            lists['batches']['valid'] += [all_data['batches']['valid']]
+            lists['batches']['test'] += [all_data['batches']['test']]
+            lists['unique_batches']['train'] += [list(np.unique(all_data['batches']['train']))]
+            lists['unique_batches']['valid'] += [list(np.unique(all_data['batches']['valid']))]
+            lists['unique_batches']['test'] += [list(np.unique(all_data['batches']['test']))]
+
+            print(f"Batches. Train: {np.unique(all_data['batches']['train'])},"
+                  f"Valid: {np.unique(all_data['batches']['valid'])},"
+                  f"Test: {np.unique(all_data['batches']['test'])}")
             if n_aug > 0:
-                all_data2['inputs']['train'] = all_data2['inputs']['train'].fillna(0)
-                all_data2['inputs']['train'] = augment_data(all_data2['inputs']['train'], n_aug, p, g)
-                all_data2['labels']['train'] = np.concatenate([all_data2['labels']['train']] * (n_aug + 1))
-                all_data2['batches']['train'] = np.concatenate([all_data2['batches']['train']] * (n_aug + 1))
-                all_data2['names']['train'] = np.concatenate([all_data2['names']['train']] * (n_aug + 1))
-                all_data2['manips']['train'] = np.concatenate([all_data2['manips']['train']] * (n_aug + 1))
-                # all_data2['sets']['train'] = np.concatenate([all_data2['sets']['train']] * (n_aug + 1))
-                all_data2['cats']['train'] = np.concatenate([all_data2['cats']['train']] * (n_aug + 1))
+                all_data['inputs']['train'] = all_data['inputs']['train'].fillna(0)
+                all_data['inputs']['train'] = augment_data(all_data['inputs']['train'], n_aug, p, g)
+                all_data['labels']['train'] = np.concatenate([all_data['labels']['train']] * (n_aug + 1))
+                all_data['batches']['train'] = np.concatenate([all_data['batches']['train']] * (n_aug + 1))
+                all_data['names']['train'] = np.concatenate([all_data['names']['train']] * (n_aug + 1))
+                all_data['manips']['train'] = np.concatenate([all_data['manips']['train']] * (n_aug + 1))
+                # all_data['sets']['train'] = np.concatenate([all_data['sets']['train']] * (n_aug + 1))
+                all_data['cats']['train'] = np.concatenate([all_data['cats']['train']] * (n_aug + 1))
             else:
-                all_data2['inputs']['train'] = all_data2['inputs']['train'].fillna(0)
-            all_data2['inputs']['valid'] = all_data2['inputs']['valid'].fillna(0)
-            all_data2['inputs']['test'] = all_data2['inputs']['test'].fillna(0)
+                all_data['inputs']['train'] = all_data['inputs']['train'].fillna(0)
+            all_data['inputs']['valid'] = all_data['inputs']['valid'].fillna(0)
+            all_data['inputs']['test'] = all_data['inputs']['test'].fillna(0)
 
             lists['classes']['train'] += [np.array([
-                np.argwhere(label == self.unique_labels)[0][0] for label in all_data2['labels']['train']
+                np.argwhere(label == self.unique_labels)[0][0] for label in all_data['labels']['train']
             ])]
             lists['classes']['valid'] += [np.array([
-                np.argwhere(label == self.unique_labels)[0][0] for label in all_data2['labels']['valid']
+                np.argwhere(label == self.unique_labels)[0][0] for label in all_data['labels']['valid']
             ])]
             lists['classes']['test'] += [np.array([
-                np.argwhere(label == self.unique_labels)[0][0] for label in all_data2['labels']['test']
+                np.argwhere(label == self.unique_labels)[0][0] for label in all_data['labels']['test']
             ])]
-            lists['labels']['train'] += [all_data2['labels']['train']]
-            lists['labels']['valid'] += [all_data2['labels']['valid']]
-            lists['labels']['test'] += [all_data2['labels']['test']]
-            lists['manips']['train'] += [all_data2['manips']['train']]
-            lists['manips']['valid'] += [all_data2['manips']['valid']]
-            lists['manips']['test'] += [all_data2['manips']['test']]
-            lists['urines']['train'] += [all_data2['urines']['train']]
-            lists['urines']['valid'] += [all_data2['urines']['valid']]
-            lists['urines']['test'] += [all_data2['urines']['test']]
-            lists['concs']['train'] += [all_data2['concs']['train']]
-            lists['concs']['valid'] += [all_data2['concs']['valid']]
-            lists['concs']['test'] += [all_data2['concs']['test']]
+            lists['labels']['train'] += [all_data['labels']['train']]
+            lists['labels']['valid'] += [all_data['labels']['valid']]
+            lists['labels']['test'] += [all_data['labels']['test']]
+            lists['manips']['train'] += [all_data['manips']['train']]
+            lists['manips']['valid'] += [all_data['manips']['valid']]
+            lists['manips']['test'] += [all_data['manips']['test']]
+            lists['urines']['train'] += [all_data['urines']['train']]
+            lists['urines']['valid'] += [all_data['urines']['valid']]
+            lists['urines']['test'] += [all_data['urines']['test']]
+            lists['concs']['train'] += [all_data['concs']['train']]
+            lists['concs']['valid'] += [all_data['concs']['valid']]
+            lists['concs']['test'] += [all_data['concs']['test']]
 
-            self.data['inputs']['train'] = all_data2['inputs']['train']
-            self.data['labels']['train'] = all_data2['labels']['train']
-            self.data['batches']['train'] = all_data2['batches']['train']
-            self.data['names']['train'] = all_data2['names']['train']
-            self.data['inputs']['valid'] = all_data2['inputs']['valid']
-            self.data['labels']['valid'] = all_data2['labels']['valid']
-            self.data['batches']['valid'] = all_data2['batches']['valid']
-            self.data['names']['valid'] = all_data2['names']['valid']
-            self.data['inputs']['test'] = all_data2['inputs']['test']
-            self.data['labels']['test'] = all_data2['labels']['test']
-            self.data['batches']['test'] = all_data2['batches']['test']
-            self.data['names']['test'] = all_data2['names']['test']
-            self.data['cats']['train'] = all_data2['cats']['train']
-            self.data['cats']['valid'] = all_data2['cats']['valid']
-            self.data['cats']['test'] = all_data2['cats']['test']
+            self.data['inputs']['train'] = all_data['inputs']['train']
+            self.data['labels']['train'] = all_data['labels']['train']
+            self.data['batches']['train'] = all_data['batches']['train']
+            self.data['names']['train'] = all_data['names']['train']
+            self.data['inputs']['valid'] = all_data['inputs']['valid']
+            self.data['labels']['valid'] = all_data['labels']['valid']
+            self.data['batches']['valid'] = all_data['batches']['valid']
+            self.data['names']['valid'] = all_data['names']['valid']
+            self.data['inputs']['test'] = all_data['inputs']['test']
+            self.data['labels']['test'] = all_data['labels']['test']
+            self.data['batches']['test'] = all_data['batches']['test']
+            self.data['names']['test'] = all_data['names']['test']
+            self.data['cats']['train'] = all_data['cats']['train']
+            self.data['cats']['valid'] = all_data['cats']['valid']
+            self.data['cats']['test'] = all_data['cats']['test']
             self.data['meta'] = {}
-            # self.data['meta']['all'] = all_data2['meta']['all']
-            self.data['meta']['urinespositives'] = all_data2['meta']['urinespositives']
-            self.data['meta']['train'] = all_data2['meta']['train']
-            self.data['meta']['valid'] = all_data2['meta']['valid']
-            self.data['meta']['test'] = all_data2['meta']['test']
-            # self.data['sets']['train'] = all_data2['sets']['train']
-            # self.data['sets']['valid'] = all_data2['sets']['valid']
-            # self.data['sets']['test'] = all_data2['sets']['test']
-            self.data['manips']['train'] = all_data2['manips']['train']
-            self.data['manips']['valid'] = all_data2['manips']['valid']
-            self.data['manips']['test'] = all_data2['manips']['test']
-            self.data['urines']['train'] = all_data2['urines']['train']
-            self.data['urines']['valid'] = all_data2['urines']['valid']
-            self.data['urines']['test'] = all_data2['urines']['test']
-            self.data['concs']['train'] = all_data2['concs']['train']
-            self.data['concs']['valid'] = all_data2['concs']['valid']
-            self.data['concs']['test'] = all_data2['concs']['test']
-            # self.data['urines']['train'] = all_data2['urines']['train']
-            # self.data['urines']['valid'] = all_data2['urines']['valid']
-            # self.data['urines']['test'] = all_data2['urines']['test']
+            self.data['meta']['all'] = all_data['meta']['all']
+            self.data['meta']['urinespositives'] = all_data['meta']['urinespositives']
+            self.data['meta']['train'] = all_data['meta']['train']
+            self.data['meta']['valid'] = all_data['meta']['valid']
+            self.data['meta']['test'] = all_data['meta']['test']
+            # self.data['sets']['train'] = all_data['sets']['train']
+            # self.data['sets']['valid'] = all_data['sets']['valid']
+            # self.data['sets']['test'] = all_data['sets']['test']
+            self.data['manips']['train'] = all_data['manips']['train']
+            self.data['manips']['valid'] = all_data['manips']['valid']
+            self.data['manips']['test'] = all_data['manips']['test']
+            self.data['urines']['train'] = all_data['urines']['train']
+            self.data['urines']['valid'] = all_data['urines']['valid']
+            self.data['urines']['test'] = all_data['urines']['test']
+            self.data['concs']['train'] = all_data['concs']['train']
+            self.data['concs']['valid'] = all_data['concs']['valid']
+            self.data['concs']['test'] = all_data['concs']['test']
+            # self.data['urines']['train'] = all_data['urines']['train']
+            # self.data['urines']['valid'] = all_data['urines']['valid']
+            # self.data['urines']['test'] = all_data['urines']['test']
 
-            m = self.train_bernn(all_data2, hparams, run)
-
-            if type(m) == int and m == -1:
-                return -1
-            elif type(m) == int:
-                print('m is int')
-                return -1
-
-
-            if self.log_plots and self.h == 0:
-                with torch.no_grad():
-                    X = torch.tensor(all_data2['inputs']['all'].values, device=self.args.device, dtype=torch.bfloat16)
-                    X2 = torch.tensor(all_data2['inputs']['urinespositives'].values, device=self.args.device, dtype=torch.bfloat16)
-                    bottleneck = m.enc(X).cpu().float().numpy()
-                    bottleneck2 = m.enc(X2).cpu().float().numpy()
-                    # y = m(X, X, mapping=False)
-
-                    # Copy all_data2 and replace 'inputs' with bottleneck and bottleneck2
-                    all_data2_bottleneck = copy.deepcopy(all_data2)
-                    all_data2_bottleneck['inputs']['all'] = pd.DataFrame(bottleneck)
-                    all_data2_bottleneck['inputs']['urinespositives'] = pd.DataFrame(bottleneck2)
-
-                    log_ord(
-                        all_data2_bottleneck,  # The encoded array
-                        self.uniques,  # Or whatever unique labels/batches you use
-                        ord_path,
-                        f'{scaler_name}_bottleneck',
-                        'bottleneck',
-                        run
-                    )
-                    metrics = log_fct(all_data2_bottleneck, "bottleneck", metrics)
-                    log_ord(
-                        all_data2_bottleneck,  # The encoded array
-                        self.uniques2,  # Or whatever unique labels/batches you use
-                        ord_path,
-                        f'{scaler_name}_bottleneck_blancs',
-                        'bottleneck_blancs',
-                        run
-                    )
+            m = self.train_bernn(all_data, h, h_params, run)
 
             try:
                 assert m is not int
             except Exception as e:
                 print('m is int', e)
 
-            self.dump_model(self.h, m, scaler_name, lists)
+            self.dump_model(h, m, scaler_name, lists)
             best_iteration += [self.best_iteration]
-
-            with torch.autocast(device_type='cuda', dtype=torch.bfloat16 if use_bf16 else torch.float32):
-                train_preds = m.predict(
-                    apply_inference_transform(all_data2['inputs']['train'].to_numpy(), self.args.normalize, self.args.device)
-                )
-                valid_preds = m.predict(
-                    apply_inference_transform(all_data2['inputs']['valid'].to_numpy(), self.args.normalize, self.args.device)
-                )
-                test_preds = m.predict(
-                    apply_inference_transform(all_data2['inputs']['test'].to_numpy(), self.args.normalize, self.args.device)
-                )
+            train_preds = m.predict(
+                torch.Tensor(all_data['inputs']['train'].to_numpy()).to(self.args.device)
+            )
+            valid_preds = m.predict(
+                torch.Tensor(all_data['inputs']['valid'].to_numpy()).to(self.args.device)
+            )
+            test_preds = m.predict(
+                torch.Tensor(all_data['inputs']['test'].to_numpy()).to(self.args.device)
+            )
             lists['acc']['train'] += [ACC(train_preds, lists['classes']['train'][-1])]
             lists['preds']['train'] += [train_preds]
 
@@ -1448,76 +1287,56 @@ class Train_bernn(TrainAE, Train):
             lists['mcc']['valid'] += [MCC(lists['classes']['valid'][-1], lists['preds']['valid'][-1])]
             lists['mcc']['test'] += [MCC(lists['classes']['test'][-1], lists['preds']['test'][-1])]
 
-            # Determine if the test batch is b11 for this fold
-            test_batches = np.unique(all_data2['batches_labels']['test'])
-            is_b11_test = len(test_batches) == 1 and test_batches[0] == 'b11'
-
-            # Only calculate and log urinespositives if test batch is b11
-            if is_b11_test and all_data2['inputs']['urinespositives'].shape[0] > 0:
-                # All urinespositives-related calculations and logging go here
+            if all_data['inputs']['urinespositives'].shape[0] > 0:
+                lists['preds']['posurines'] += [
+                    m.predict(torch.Tensor(all_data['inputs']['urinespositives'].to_numpy()).to(self.args.device))
+                ]
+                lists['labels']['posurines'] += [all_data['labels']['urinespositives']]
+                lists['classes']['posurines'] += [
+                    np.array([
+                        np.argwhere(
+                            label == self.unique_labels
+                        )[0][0] for label in all_data['labels']['urinespositives']
+                    ])
+                ]
+                lists['names']['posurines'] += [all_data['names']['urinespositives']]
+                lists['batches']['posurines'] += [all_data['batches']['urinespositives']]
+                lists['manips']['posurines'] += [all_data['manips']['urinespositives']]
                 try:
-                    with torch.autocast(device_type='cuda', dtype=torch.bfloat16 if use_bf16 else torch.float32):
-                        lists['preds']['posurines'] += [m.predict(
-                            apply_inference_transform(all_data2['inputs']['urinespositives'].to_numpy(), self.args.normalize, self.args.device)
-                        )]
-                    lists['labels']['posurines'] += [all_data2['labels']['urinespositives']]
-                    lists['classes']['posurines'] += [
-                        np.array([
-                            np.argwhere(
-                                label == self.unique_labels
-                            )[0][0] for label in all_data2['labels']['urinespositives']
-                        ])
+                    lists['proba']['posurines'] += [
+                        m.predict_proba(
+                            torch.Tensor(all_data['inputs']['urinespositives'].to_numpy()).to(self.args.device)
+                        )
                     ]
-                    lists['names']['posurines'] += [all_data2['names']['urinespositives']]
-                    lists['batches']['posurines'] += [all_data2['batches']['urinespositives']]
-                    lists['manips']['posurines'] += [all_data2['manips']['urinespositives']]
-                    try:
-                        lists['proba']['posurines'] += [
-                            m.predict_proba(
-                                apply_inference_transform(all_data2['inputs']['urinespositives'].to_numpy(), self.args.normalize, self.args.device)
-                            )
-                        ]
-                    except Exception as e:
-                        print('bernn proba error train', e)
-                        pass
                 except Exception as e:
-                    print('Error at urinespositives calculation', e)
-
-            # ... rest of your fold code ...
-
-            # Only log/save urinespositives results if test batch is b11
-            if is_b11_test and all_data2['inputs']['urinespositives'].shape[0] > 0:
-                # Place any urinespositives-specific logging or saving here
-                try:
-                    np.concatenate(lists['proba']['posurines']).max(1)
-                except Exception as e:
-                    print('Error at concat of probas', e)
+                    print('bernn proba error train', e)
+                    pass
 
             try:
                 lists['proba']['train'] += [m.predict_proba(
-                    apply_inference_transform(all_data2['inputs']['train'].to_numpy(), self.args.normalize, self.args.device)
+                    torch.Tensor(all_data['inputs']['train'].to_numpy()).to(self.args.device)
                 )]
                 lists['proba']['valid'] += [m.predict_proba(
-                    apply_inference_transform(all_data2['inputs']['valid'].to_numpy(), self.args.normalize, self.args.device)
+                    torch.Tensor(all_data['inputs']['valid'].to_numpy()).to(self.args.device)
                 )]
                 lists['proba']['test'] += [m.predict_proba(
-                    apply_inference_transform(all_data2['inputs']['test'].to_numpy(), self.args.normalize, self.args.device)
+                    torch.Tensor(all_data['inputs']['test'].to_numpy()).to(self.args.device)
                 )]
                 data_list = {
                     'valid': {
-                        'inputs': all_data2['inputs']['valid'],
+                        'inputs': all_data['inputs']['valid'],
                         'labels': lists['classes']['valid'][-1],
                         'preds': lists['preds']['valid'][-1],
                         'proba': lists['proba']['valid'][-1],
-                        'batches': all_data2['batches']['valid'],
+                        'batches': all_data['batches']['valid'],
                         'names': lists['proba']['valid'][-1]
                     },
                     'test': {
-                        'inputs': all_data2['inputs']['test'],
+                        'inputs': all_data['inputs']['test'],
                         'labels': lists['classes']['test'][-1],
                         'preds': lists['preds']['test'][-1],
                         'proba': lists['proba']['test'][-1],
-                        'batches': all_data2['batches']['test'],
+                        'batches': all_data['batches']['test'],
                         'names': lists['proba']['test'][-1]
                     }
                 }
@@ -1525,18 +1344,18 @@ class Train_bernn(TrainAE, Train):
                 print('bernn predict_proba error train', e)
                 data_list = {
                     'valid': {
-                        'inputs': all_data2['inputs']['valid'],
+                        'inputs': all_data['inputs']['valid'],
                         'labels': lists['classes']['valid'][-1],
                         'preds': lists['preds']['valid'][-1],
-                        'batches': all_data2['batches']['valid'],
+                        'batches': all_data['batches']['valid'],
                         'names': lists['names']['valid'][-1],
                         'proba': lists['proba']['valid'][-1]
                     },
                     'test': {
-                        'inputs': all_data2['inputs']['test'],
+                        'inputs': all_data['inputs']['test'],
                         'labels': lists['classes']['test'][-1],
                         'preds': lists['preds']['test'][-1],
-                        'batches': all_data2['batches']['test'],
+                        'batches': all_data['batches']['test'],
                         'names': lists['names']['test'][-1],
                         'proba': lists['proba']['test'][-1]
                     }
@@ -1545,7 +1364,7 @@ class Train_bernn(TrainAE, Train):
             if self.best_scores['acc']['valid'] is None:
                 self.best_scores['acc']['valid'] = 0
 
-            self.h += 1
+            h += 1
             try:
                 np.concatenate(lists['proba']['posurines']).max(1)
             except Exception as e:
@@ -1556,9 +1375,9 @@ class Train_bernn(TrainAE, Train):
         except Exception as e:
             print('Error at concat of probas after repeat loop', e)
         if self.args.groupkfold:
-            batches = np.concatenate([np.unique(x) for x in lists['batches_labels']['valid']])
+            batches = np.concatenate([np.unique(x) for x in lists['batches']['valid']])
             toprint = [f"{batches[i]}:{lists['mcc']['valid'][i]}" for i in range(len(batches))]
-            print('VALID mcc for batches:', toprint)
+            print(toprint)
         else:
             print(lists['mcc']['valid'])
         print('valid_acc:', np.mean(lists['acc']['valid']),
@@ -1577,18 +1396,15 @@ class Train_bernn(TrainAE, Train):
             np.concatenate(lists['proba']['posurines']).max(1)
         except Exception as e:
             print('Error at concat of probas after repeat loop 2', e)
-        # Make predictions on urinespositives
-        if len(lists['names']['posurines']) > 0:
-            posurines_df, lists = self.make_predictions(lists, run)
         lists, posurines_df = self.save_confusion_matrices(lists, run)
         self.save_calibration_curves(lists, run)
         self.save_roc_curves(lists, run)
         if np.mean(lists['mcc']['valid']) > np.mean(self.best_scores['mcc']['valid']):
             if self.args.log_shap:
                 Xs = {
-                    'train': all_data2['inputs']['train'],
-                    'valid': all_data2['inputs']['valid'],
-                    'test': all_data2['inputs']['test'],
+                    'train': all_data['inputs']['train'],
+                    'valid': all_data['inputs']['valid'],
+                    'test': all_data['inputs']['test'],
                     # 'posurines': all_data['inputs']['urinespositives'],
                 }
                 ys = {
@@ -1640,7 +1456,7 @@ class Train_bernn(TrainAE, Train):
             }
             self.remove_models(scaler_name)
 
-        if all_data2['inputs']['urinespositives'].shape[0] > 0 and posurines_df is not None and len(lists['names']['posurines']) > 0:
+        if all_data['inputs']['urinespositives'].shape[0] > 0 and posurines_df is not None:
             self.save_thresholds_curve0('posurines', posurines_df, run)
             self.save_thresholds_curve('posurines', lists, run)
             run['posurines/individual_results'].upload(
@@ -1652,7 +1468,7 @@ class Train_bernn(TrainAE, Train):
             run.stop()
             # model.stop()
 
-        return np.mean(lists['mcc']['valid'])
+        return 1 - np.mean(lists['mcc']['valid'])
 
     def get_ordered_layers(self, params):
         """Extract layer parameters from params dictionary, order them, and store in a new dictionary.
@@ -1727,59 +1543,16 @@ class Train_bernn(TrainAE, Train):
         return all_data
 
 
-def apply_inference_transform(X, normalize, device):
-    """
-    Apply the same transform as used in training to input X for inference.
-    Args:
-        X: Input data (numpy array or PIL image)
-        device: torch device to move the tensor to
-    Returns:
-        torch.Tensor: Transformed tensor ready for model prediction
-    """
-    if normalize:
-        transform = lambda x: (x - 0.5) / 0.5
-        X_transformed = transform(X)
-    else:
-        X_transformed = X
-    if isinstance(X_transformed, np.ndarray):
-        X_transformed = torch.tensor(X_transformed, device=device, dtype=torch.bfloat16)
-    elif isinstance(X_transformed, torch.Tensor):
-        X_transformed = X_transformed.to(device, dtype=torch.bfloat16)
-    if X_transformed.ndim == 3:  # e.g., C x H x W
-        X_transformed = X_transformed.unsqueeze(0)
-    X_transformed = X_transformed.to(device)
-    return X_transformed
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    # Add relevant arguments here, e.g. for data, model, etc.
+    parser.add_argument('--device', type=str, default='cuda:0')
+    # ... (add more as needed)
+    args = parser.parse_args()
 
-def get_lr_scheduler(optimizer, lr, n_epochs, scheduler_type, loader, verbose, **kwargs):
-    """
-    Returns a PyTorch learning rate scheduler for the optimizer.
-    Args:
-        optimizer: PyTorch optimizer
-        lr: initial learning rate
-        n_epochs: total number of epochs
-        warmup: number of warmup epochs (optional)
-        scheduler_type: type of scheduler ('none', 'step', 'ReduceLROnPlateau', 'cosine')
-        kwargs: additional scheduler-specific arguments
-    Returns:
-        scheduler or None
-    """
-    import torch
-    if scheduler_type is None or scheduler_type == 'none':
-        return None
-    if scheduler_type == 'step':
-        step_size = kwargs.get('step_size', max(1, n_epochs // 10))
-        gamma = kwargs.get('gamma', 0.1)
-        return torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
-    if scheduler_type == 'ReduceLROnPlateau':
-        patience = kwargs.get('patience', max(1, n_epochs // 50))
-        factor = kwargs.get('factor', 0.5)
-        return torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, patience=patience, factor=factor, verbose=verbose
-        )
-    if scheduler_type == 'cosine':
-        T_max = kwargs.get('T_max', n_epochs)
-        eta_min = kwargs.get('eta_min', 0)
-        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=T_max, eta_min=eta_min)
-    if scheduler_type == 'onecycle':
-        return torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=n_epochs*len(loader), pct_start=0.3)
-    raise ValueError(f"Unknown scheduler_type: {scheduler_type}")
+    # TODO: Adapt data loading and preprocessing for spectra tokenization
+    # TODO: Adapt training loop for LargeSpectralBERT
+    train = TrainLSM(args, path=None)  # Add other required args as needed
+    train.load_autoencoder()
+    # train.train()  # Uncomment and adapt when ready

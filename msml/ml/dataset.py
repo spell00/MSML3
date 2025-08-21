@@ -111,7 +111,7 @@ def get_data_infer(path, args, seed=42):
     labels = matrix.iloc[:, 1]
 
     if args.binary:
-        labels = pd.Series(['blanc' if label=='blanc' else 'bact' for label in labels])
+        labels = pd.Series(['blanc' if label == 'blanc' else 'bact' for label in labels])
 
     batches = matrix.iloc[:, 2]
     manips = pd.Series([x.split("_")[2] for x in names])
@@ -144,11 +144,11 @@ def get_data_infer(path, args, seed=42):
     mz_parents = [float(column.split('_')[0]) for column in columns]
     mzs = [float(column.split('_')[2]) for column in columns]
     rts = [float(column.split('_')[1]) for column in columns]
-    columns_to_keep = [True if (mzp >= args.min_mz_parent and mzp <= args.max_mz_parent) \
-                        and (mz >= args.min_mz and mz <= args.max_mz) \
-                        and (rt >= args.min_rt and rt <= args.max_rt) \
-                        else False for name, mzp, mz, rt in zip(columns, mz_parents, mzs, rts)
-                        ]
+    columns_to_keep = [True if (mzp >= args.min_mz_parent and mzp <= args.max_mz_parent)
+                       and (mz >= args.min_mz and mz <= args.max_mz)
+                       and (rt >= args.min_rt and rt <= args.max_rt)
+                       else False for name, mzp, mz, rt in zip(columns, mz_parents, mzs, rts)
+                       ]
 
     matrix = matrix.loc[:, columns_to_keep]
     # pool_pos = [i for i, name in enumerate(names.values.flatten()) if 'QC' in name]
@@ -186,8 +186,8 @@ def get_data_infer(path, args, seed=42):
         data['concs']["test_pool"] = concs[pool_pos]
 
         # This is juste to make the pipeline work. Meta should be 0 for the amide dataset
-        data['orders'][f"test_pool"] = orders[pool_pos]
-        data['cats'][f"test_pool"] = np.array(
+        data['orders']["test_pool"] = orders[pool_pos]
+        data['cats']["test_pool"] = np.array(
             [len(np.unique(data['labels']['test'])) for _ in batches[pool_pos]])
 
         data['labels']['test'] = np.array([x.split('-')[0] for i, x in enumerate(data['labels']['test'])])
@@ -268,9 +268,9 @@ def get_data_all(path, args, seed=42):
         mz_parents = [float(column.split('_')[0]) for column in columns]
         mzs = [float(column.split('_')[2]) for column in columns]
         rts = [float(column.split('_')[1]) for column in columns]
-        columns_to_keep = [True if (mzp >= args.min_mz_parent and mzp <= args.max_mz_parent) \
-                           and (mz >= args.min_mz and mz <= args.max_mz) \
-                           and (rt >= args.min_rt and rt <= args.max_rt) \
+        columns_to_keep = [True if (mzp >= args.min_mz_parent and mzp <= args.max_mz_parent)
+                           and (mz >= args.min_mz and mz <= args.max_mz)
+                           and (rt >= args.min_rt and rt <= args.max_rt)
                            else False for name, mzp, mz, rt in zip(columns, mz_parents, mzs, rts)
                            ]
         matrix = matrix.loc[:, columns_to_keep]
@@ -330,7 +330,7 @@ def get_data_all(path, args, seed=42):
         unique_labels = np.array(np.unique(data['labels'][group]))
         # place blancs at the end
         blanc_class = np.argwhere(unique_labels == 'blanc').flatten()[0]
-        unique_labels = np.concatenate((np.delete(unique_labels, blanc_class), ['blanc']))
+        unique_labels = np.concatenate((['blanc'], np.delete(unique_labels, blanc_class)))
 
         data['cats'][group] = np.array(
             [np.where(x == unique_labels)[0][0] for i, x in enumerate(data['labels'][group])]
@@ -362,7 +362,7 @@ def get_data_all(path, args, seed=42):
         urinespositives_real_df = pd.concat((
             pd.read_csv('resources/bacteries_2024/B10-05-03-2024/b10_patients_samples.csv'),
             pd.read_csv('resources/bacteries_2024/B11-05-24-2024/b11_patients_samples.csv'),
-            pd.read_csv('resources/bacteries_2024/BPatients-03-14-2025/patients_samples_20250318.csv'),
+            pd.read_csv('resources/bacteries_2024/BPatients-14-03-2025/patients_samples_20250318.csv'),
         ))
         # Keep unique samples
         urinespositives_real_df = urinespositives_real_df.drop_duplicates(subset=['ID'])

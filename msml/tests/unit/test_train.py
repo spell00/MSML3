@@ -286,7 +286,7 @@ def test_save_model_edge_cases(tmp_path):
         'state_dict': lambda: {}
     })
     path = tmp_path / "non_existent_dir" / "model.pth"
-    
+
     with pytest.raises(FileNotFoundError):
         save_model(model, str(path))
 
@@ -294,6 +294,6 @@ def test_save_model_edge_cases(tmp_path):
 def test_load_model_edge_cases(tmp_path):
     """Test model loading with edge cases"""
     path = tmp_path / "non_existent_model.pth"
-    
+
     with pytest.raises(FileNotFoundError):
         load_model(str(path))

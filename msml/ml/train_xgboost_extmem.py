@@ -1443,5 +1443,50 @@ class Train:
 
         return lists, posurines_df
 
+    def get_xgboost_model(self, dmatrices, param_grid):
+        eval_set = [(dmatrices['train'], 'train'), (dmatrices['valid'], 'eval')]
+        try:
+            # Try new XGBoost version (>= 1.7.0)
+            early_stop = xgboost.callback.EarlyStopping(int(param_grid['early_stopping_rounds']))
+            callbacks = [early_stop]
+        except AttributeError:
+            # Fall back to old XGBoost version
+            callbacks = []
+            param_grid['early_stopping_rounds'] = int(param_grid['early_stopping_rounds'])
+
+        if self.args.model_name == 'xgboost' and 'cuda' in self.args.device:
+            if len(self.args.device.split(':')) == 0:
+                gpu_id = 0
+            else:
+                gpu_id = self.args.device.split(':')[1]
+            m = xgboost.train({
+                "tree_method": "gpu_hist",
+                "gpu_id": gpu_id,
+                "max_depth": param_grid['max_depth'],
+                "objective": 'multi:softprob',
+                "num_class": len(self.unique_labels),
+                "colsample_bytree": self.args.colsample_bytree,
+                "max_bin": self.args.max_bin,
+            }, dmatrices['train'],
+                num_boost_round=param_grid['n_estimators'],
+                evals=eval_set,
+                callbacks=callbacks,
+                verbose_eval=True)
+        elif self.args.model_name == 'xgboost':
+            m = xgboost.train({
+                "tree_method": "hist",
+                "max_depth": param_grid['max_depth'],
+                "objective": 'multi:softprob',
+                "num_class": len(self.unique_labels),
+            }, dmatrices['train'],
+                num_boost_round=param_grid['n_estimators'],
+                evals=eval_set,
+                callbacks=callbacks,
+                verbose_eval=True)
+        else:
+            exit('Wrong model, only xgboost can be used')
+
+        return m
+
 
 

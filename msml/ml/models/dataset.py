@@ -173,6 +173,128 @@ class MSDataset3(Dataset):
             meta_pos_batch_sample, meta_neg_batch_sample, set
 
 
+class MSDataset4(Dataset):
+    def __init__(self, data, meta, torec, names=None, labels=None, batches=None, sets=None, transform=None, crop_size=-1,
+                 add_noise=False, random_recs=False, triplet_dloss=False):
+        """
+
+        Args:
+            data: Contains a dict of data
+            meta: array of meta data
+            names: array or list of names
+            labels: array or list of labels
+            batches: array or list of batches
+            sets: array or list of sets
+            transform: transform to apply to the data
+            crop_size: crop size to apply to the data
+            add_noise: Whether to add noise to the data
+            random_recs: Whether to sample random reconstructions
+            triplet_dloss: Whether to use triplet loss of the domain
+        """
+        self.random_recs = random_recs
+        try:
+            self.samples = data.to_numpy()
+        except:
+            self.samples = data
+
+        self.add_noise = add_noise
+        self.names = names
+        self.meta = meta
+        self.sets = sets
+        self.transform = transform
+        self.crop_size = crop_size
+        self.labels = labels
+        self.unique_labels = list(set(labels))
+        self.batches = batches
+        self.unique_batches = np.unique(batches)
+        labels_inds = {label: [i for i, x in enumerate(labels) if x == label] for label in self.unique_labels}
+        batches_inds = {batch: [i for i, x in enumerate(batches) if x == batch] for batch in self.unique_batches}
+        # try:
+        try:
+            self.labels_data = {label: data.iloc[labels_inds[label]].to_numpy() for label in labels}
+            self.labels_meta_data = {label: meta.iloc[labels_inds[label]].to_numpy() for label in labels}
+            self.batches_data = {batch: data.iloc[batches_inds[batch]].to_numpy() for batch in batches}
+            self.batches_meta_data = {batch: meta.iloc[batches_inds[batch]].to_numpy() for batch in batches}
+        except:
+            self.labels_data = {label: data[labels_inds[label]] for label in labels}
+            self.labels_meta_data = {label: meta[labels_inds[label]] for label in labels}
+            self.batches_data = {batch: data[batches_inds[batch]] for batch in batches}
+            self.batches_meta_data = {batch: meta[batches_inds[batch]] for batch in batches}
+
+        # except:
+        #     print(labels)
+        self.n_labels = {label: len(self.labels_data[label]) for label in labels}
+        self.n_batches = {batch: len(self.batches_data[batch]) for batch in batches}
+        self.triplet_dloss = triplet_dloss
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        meta_to_rec = None
+        if self.labels is not None:
+            label = self.labels[idx]
+            batch = self.batches[idx]
+            set = self.sets[idx]
+            try:
+                name = self.names[idx]
+            except:
+                name = str(self.names.iloc[idx])
+            try:
+                meta_to_rec = self.meta[idx]
+            except:
+                meta_to_rec = self.meta.iloc[idx].to_numpy()
+
+        else:
+            label = None
+            batch = None
+            name = None
+        if self.random_recs:
+            to_rec = self.labels_data[label][np.random.randint(0, self.n_labels[label])].copy()
+            not_label = None
+            while not_label == label or not_label is None:
+                not_label = self.unique_labels[np.random.randint(0, len(self.unique_labels))].copy()
+            ind = np.random.randint(0, self.n_labels[not_label])
+            not_to_rec = self.labels_data[not_label][ind].copy()
+            meta_not_to_rec = self.labels_meta_data[not_label][ind].copy()
+            meta_to_rec = self.meta[idx]
+        else:
+            to_rec = self.samples[idx].copy()
+            not_to_rec = torch.Tensor([0])
+        if (self.triplet_dloss == 'revTriplet' or self.triplet_dloss == 'inverseTriplet') and len(self.unique_batches) > 1:
+            not_batch_label = None
+            while not_batch_label == batch or not_batch_label is None:
+                not_batch_label = self.unique_batches[np.random.randint(0, len(self.unique_batches))].copy()
+            pos_ind = np.random.randint(0, self.n_batches[batch])
+            neg_ind = np.random.randint(0, self.n_batches[not_batch_label])
+            pos_batch_sample = self.batches_data[batch][pos_ind].copy()
+            neg_batch_sample = self.batches_data[not_batch_label][neg_ind].copy()
+            meta_pos_batch_sample = self.batches_meta_data[batch][pos_ind].copy()
+            meta_neg_batch_sample = self.batches_meta_data[not_batch_label][neg_ind].copy()
+        else:
+            pos_batch_sample = self.samples[idx].copy()
+            neg_batch_sample = self.samples[idx].copy()
+            meta_pos_batch_sample = self.samples[idx].copy()
+            meta_neg_batch_sample = self.samples[idx].copy()
+        x = self.samples[idx]
+        if self.crop_size != -1:
+            max_start_crop = x.shape[1] - self.crop_size
+            ran = np.random.randint(0, max_start_crop)
+            x = torch.Tensor(x)[:, ran:ran + self.crop_size]  # .to(device)
+        if self.transform:
+            x = self.transform(np.expand_dims(x, 0)).squeeze()
+            to_rec = self.transform(np.expand_dims(to_rec, 0)).squeeze()
+            not_to_rec = self.transform(np.expand_dims(not_to_rec, 0)).squeeze()
+            pos_batch_sample = self.transform(np.expand_dims(pos_batch_sample, 0)).squeeze()
+            neg_batch_sample = self.transform(np.expand_dims(neg_batch_sample, 0)).squeeze()
+
+        if self.add_noise:
+            if np.random.random() > 0.5:
+                x = x * (Variable(x.data.new(x.size()).normal_(0, 0.1)) > -.1).type_as(x)
+        return x, meta_to_rec, name, label, batch, to_rec, not_to_rec, pos_batch_sample, neg_batch_sample, \
+            meta_pos_batch_sample, meta_neg_batch_sample, set
+
+
 # This function is much faster than using pd.read_csv
 def load_data(path):
     cols = csv.DictReader(open(path))

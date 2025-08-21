@@ -6,25 +6,19 @@ Created on Fri May 28 2021
 """
 
 import warnings
-import pickle
-
 import numpy as np
-import pandas as pd
 import os
-import csv
-import json
 import matplotlib
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from sklearn.metrics import matthews_corrcoef as MCC
-from sklearn.multiclass import OneVsRestClassifier
+# from sklearn.metrics import matthews_corrcoef as MCC
+# from sklearn.multiclass import OneVsRestClassifier
 from sklearn import metrics
 from sklearn.metrics import roc_auc_score
 from msml.utils.utils import plot_confusion_matrix
-import mlflow
 from sklearn.metrics import roc_curve
-# binarize 
+# binarize
 from sklearn.preprocessing import label_binarize
 from sklearn.calibration import calibration_curve
 

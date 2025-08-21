@@ -20,7 +20,7 @@ from .log_shap import log_shap
 import xgboost
 import matplotlib.pyplot as plt
 # import pipeline from sklearn
-from utils import columns_stats_over0
+from .utils import columns_stats_over0
 
 import sys
 
@@ -366,6 +366,10 @@ class Train:
                 all_data['batches']['all'][train_inds], \
                 all_data['batches']['all'][valid_inds], \
                 all_data['batches']['all'][test_inds]
+            train_batches_labels, valid_batches_labels, test_batches_labels =\
+                all_data['batches_labels']['all'][train_inds], \
+                all_data['batches_labels']['all'][valid_inds], \
+                all_data['batches_labels']['all'][test_inds]
             train_names, valid_names, test_names =\
                 all_data['names']['all'][train_inds], \
                 all_data['names']['all'][valid_inds], \
@@ -513,6 +517,11 @@ class Train:
                 'valid': valid_batches,
                 'test': test_batches,
             },
+            'batches_labels': {
+                'train': train_batches_labels,
+                'valid': valid_batches_labels,
+                'test': test_batches_labels,
+            },
             'names': {
                 'train': train_names,
                 'valid': valid_names,
@@ -527,13 +536,71 @@ class Train:
 
         return data_dict
 
+    def log_shap(self, m, lists, data_dict, run):
+        if self.args.log_shap:
+            Xs = {
+                'train': data_dict['data']['train'],
+                'valid': data_dict['data']['valid'],
+                'test': data_dict['data']['test'],
+                # 'posurines': all_data['inputs']['urinespositives'],
+            }
+            ys = {
+                'train': lists['classes']['train'][-1],
+                'valid': lists['classes']['valid'][-1],
+                'test': lists['classes']['test'][-1],
+                # 'posurines': np.array([
+                #     np.argwhere(
+                #         label == self.unique_labels)[0][0]
+                #     for label in all_data['labels']['urinespositives']
+                # ]),
+            }
+            labels = {
+                'train': lists['labels']['train'][-1],
+                'valid': lists['labels']['valid'][-1],
+                'test': lists['labels']['test'][-1],
+                # 'posurines': np.array([
+                #     np.argwhere(label == self.unique_labels)[0][0]
+                #     for label in all_data['labels']['urinespositives']
+                # ]),
+            }
+            args_dict = {
+                'inputs': Xs,
+                'ys': ys,
+                'labels': labels,
+                'model': m,
+                'model_name': self.args.model_name,
+                'log_path': self.log_path,
+            }
+            run = log_shap(run, args_dict)
+            run['log_shap'] = 1
+        else:
+            run['log_shap'] = 0
+
     def upos_operations(self, all_data):
         # Basically just takes the samples back into training
         if all_data['inputs']['urinespositives'].shape[0] > 0:
             # Keep only eco
             from collections import Counter
             print(Counter(all_data['labels']['urinespositives']))
-            inds_to_keep = np.argwhere(np.isin(all_data['labels']['urinespositives'], ['eco', 'kpn', 'sag'])).flatten()
+            print("Batch counter:", Counter(all_data['batches_labels']['urinespositives']))
+            
+            # Counter of labels per batch
+            print("Labels per batch:")
+            for batch in np.unique(all_data['batches_labels']['urinespositives']):
+                batch_mask = all_data['batches_labels']['urinespositives'] == batch
+                batch_labels = all_data['labels']['urinespositives'][batch_mask]
+                print(f"  Batch {batch}: {dict(Counter(batch_labels))}")
+            
+            bacts = self.args.patient_bact.split(',')
+            if bacts[0] != '':
+                inds_to_keep = np.argwhere(
+                    np.isin(
+                        all_data['labels']['urinespositives'],
+                        ['eco', 'kpn', 'sag']
+                    )
+                ).flatten()
+            else:
+                inds_to_keep = np.arange(len(all_data['labels']['urinespositives']))
 
             for k in all_data.keys():
                 if k == 'inputs':
@@ -561,6 +628,8 @@ class Train:
                     np.concatenate((all_data['labels']['all'], all_data['labels']['urinespositives'][b_inds]))
                 all_data['batches']['all'] =\
                     np.concatenate((all_data['batches']['all'], all_data['batches']['urinespositives'][b_inds]))
+                all_data['batches_labels']['all'] =\
+                    np.concatenate((all_data['batches_labels']['all'], all_data['batches_labels']['urinespositives'][b_inds]))
                 all_data['names']['all'] =\
                     np.concatenate((all_data['names']['all'], all_data['names']['urinespositives'][b_inds]))
                 all_data['concs']['all'] =\
@@ -571,6 +640,7 @@ class Train:
                     all_data['inputs']['urinespositives'].drop(all_data['inputs']['urinespositives'].index[b_inds])
                 all_data['labels']['urinespositives'] = np.delete(all_data['labels']['urinespositives'], b_inds)
                 all_data['batches']['urinespositives'] = np.delete(all_data['batches']['urinespositives'], b_inds)
+                all_data['batches_labels']['urinespositives'] = np.delete(all_data['batches_labels']['urinespositives'], b_inds)
                 all_data['names']['urinespositives'] = np.delete(all_data['names']['urinespositives'], b_inds)
                 all_data['concs']['urinespositives'] = np.delete(all_data['concs']['urinespositives'], b_inds)
                 # Remove urines10 from urinespositives because duplicated
@@ -580,6 +650,7 @@ class Train:
                 all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[inds_to_keep]
                 all_data['labels']['urinespositives'] = all_data['labels']['urinespositives'][inds_to_keep]
                 all_data['batches']['urinespositives'] = all_data['batches']['urinespositives'][inds_to_keep]
+                all_data['batches_labels']['urinespositives'] = all_data['batches_labels']['urinespositives'][inds_to_keep]
                 all_data['names']['urinespositives'] = all_data['names']['urinespositives'][inds_to_keep]
                 all_data['concs']['urinespositives'] = all_data['concs']['urinespositives'][inds_to_keep]
 
@@ -626,12 +697,16 @@ class Train:
             'inputs': copy.deepcopy(self.data['inputs']),
             'labels': copy.deepcopy(self.data['labels']),
             'batches': copy.deepcopy(self.data['batches']),
+            'batches_labels': copy.deepcopy(self.data['batches_labels']),
             'concs': copy.deepcopy(self.data['concs']),
             'names': copy.deepcopy(self.data['names']),
+            'manips': copy.deepcopy(self.data['manips']),
+            'urines': copy.deepcopy(self.data['urines']),
+            'cats': copy.deepcopy(self.data['cats']),
         }
 
         if self.args.binary:
-            all_data['labels']['all'] = np.array(['blanc' if label =='blanc' else 'bact' for label in all_data['labels']['all']])
+            all_data['labels']['all'] = np.array(['blanc' if label == 'blanc' else 'bact' for label in all_data['labels']['all']])
         # self.unique_labels devrait disparaitre et remplace par self.uniques['labels']
         self.unique_labels = np.array(np.unique(all_data['labels']['all']))
         # place blancs at the end
@@ -1066,7 +1141,8 @@ class Train:
                     'train': lists['classes']['train'][-1],
                     'valid': lists['classes']['valid'][-1],
                     'test': lists['classes']['test'][-1],
-                    # 'posurines': np.array([np.argwhere(l == self.unique_labels)[0][0] for l in all_data['labels']['urinespositives']]),
+                    # 'posurines': np.array([
+                    # np.argwhere(l == self.unique_labels)[0][0] for l in all_data['labels']['urinespositives']]),
                 }
                 args_dict = {
                     'inputs': Xs,
@@ -1084,7 +1160,9 @@ class Train:
             # Save the individual scores of each sample with class, #batch
             self.save_results_df(lists, run)
             self.retrieve_best_scores(lists)
-            best_scores = self.save_best_model_hparams(param_grid, other_params, scaler_name, lists['unique_batches'], metrics)
+            best_scores = self.save_best_model_hparams(
+                param_grid, other_params, scaler_name, lists['unique_batches'], metrics
+            )
         else:
             best_scores = {
                 'nbe': None,
@@ -1148,16 +1226,17 @@ class Train:
         self.best_params_dict_values['valid_mcc'] = self.best_scores['mcc']['valid']
         self.best_params_dict_values['test_mcc'] = self.best_scores['mcc']['test']
 
-        self.best_params_dict['ami'] = metrics[scaler_name]['all']['adjusted_mutual_info_score']['domains']
-        self.best_params_dict['ari'] = metrics[scaler_name]['all']['adjusted_rand_score']['domains']
         n_batches = np.unique(
             np.concatenate([
                 np.concatenate(unique_batches[b]) for b in unique_batches if len(unique_batches[b]) > 0
             ])
         ).flatten().shape[0]
-        self.best_params_dict['nBE'] = (
-            np.log(n_batches) - metrics[scaler_name]['all']['shannon']['domains']
-        ) / np.log(n_batches)
+        for name in metrics.keys():
+            self.best_params_dict[f'{name}/ami'] = metrics[name]['all']['adjusted_mutual_info_score']['domains']
+            self.best_params_dict[f'{name}/ari'] = metrics[name]['all']['adjusted_rand_score']['domains']
+            self.best_params_dict[f'{name}/nBE'] = (
+                np.log(n_batches) - metrics[name]['all']['shannon']['domains']
+            ) / np.log(n_batches)
 
         self.best_params_dict['train_acc_mean'] = np.mean(self.best_scores['acc']['train'])
         self.best_params_dict['valid_acc_mean'] = np.mean(self.best_scores['acc']['valid'])
@@ -1189,10 +1268,10 @@ class Train:
     def make_predictions(self, lists, run):
         blanc_ids = [
             np.array([i for i, (x, b) in enumerate(
-                zip(lists['labels']['valid'][j], lists['batches']['valid'][j])
+                zip(lists['labels']['test'][j], lists['batches']['test'][j])
             ) if x == 'blanc' and b in [np.argwhere(
                 self.uniques['batches'] == 'b11'
-            )[0][0]]]) for j in range(len(lists['labels']['valid']))
+            )[0][0]]]) for j in range(len(lists['labels']['test']))
         ]
         try:
             np.concatenate(lists['proba']['posurines']).max(1)
@@ -1212,7 +1291,7 @@ class Train:
             posurines_df[label] = np.concatenate(lists['proba']['posurines'])[:, i]
 
         posurines_df.loc[:, 'preds'] = [
-            self.unique_labels[label] for label in posurines_df.loc[:, 'preds'].to_numpy()
+            self.unique_labels[int(label)] for label in posurines_df.loc[:, 'preds'].to_numpy()
         ]
         # assert 'bact' not in posurines_df.loc[:, 'preds']
         posurines_df.to_csv(
@@ -1228,21 +1307,27 @@ class Train:
             return [x for xs in xss for x in xs]
 
         blk_names = flatten([
-            [lists['names']['valid'][j][i] for i in blanc_ids[j]]
+            [lists['names']['test'][j][i] for i in blanc_ids[j]]
             for j in range(len(lists['names']['posurines'])) if len(blanc_ids[j]) > 0
         ])
         blk_batches = flatten([
-            [lists['batches']['valid'][j][i] for i in blanc_ids[j]]
+            [lists['batches']['test'][j][i] for i in blanc_ids[j]]
             for j in range(len(lists['batches']['posurines'])) if len(blanc_ids[j]) > 0
         ])
         blk_labels = flatten([
-            [lists['labels']['valid'][j][i] for i in blanc_ids[j]]
+            [lists['labels']['test'][j][i] for i in blanc_ids[j]]
             for j in range(len(lists['labels']['posurines'])) if len(blanc_ids[j]) > 0
         ])
         blk_preds = flatten([
-            [lists['preds']['valid'][j][i] for i in blanc_ids[j]]
+            [lists['preds']['test'][j][i] for i in blanc_ids[j]]
             for j in range(len(lists['preds']['posurines'])) if len(blanc_ids[j]) > 0
         ])
+        proba_posurines = np.stack(lists['proba']['posurines']).mean(0)
+        blk_proba = np.stack(flatten([
+            [lists['proba']['test'][j][i] for i in blanc_ids[j]] for j in range(
+                len(lists['preds']['posurines'])
+                ) if len(blanc_ids[j]) > 0
+        ]))
         if self.args.groupkfold:
             # Find which or the batch indices are b10 and bpatients
             # b10_ind = [
@@ -1258,20 +1343,15 @@ class Train:
 
             if sum(reps_to_use) > 0:
                 lists['proba']['posurines'] = np.stack([
-                    lists['proba']['posurines'][i] for i in range(len(lists['proba']['posurines'])) if reps_to_use[i] == 1
+                    lists['proba']['posurines'][i] for i in range(
+                        len(lists['proba']['posurines'])
+                    ) if reps_to_use[i] == 1
                 ])
             else:
                 print('No upos in test!')
                 print(f'test: {self.args.test}')
                 posurines_df = pd.DataFrame([])
                 return posurines_df, lists
-
-        proba_posurines = np.stack(lists['proba']['posurines']).mean(0)
-        blk_proba = np.stack(flatten([
-            [lists['proba']['valid'][j][i] for i in blanc_ids[j]] for j in range(
-                len(lists['preds']['posurines'])
-                ) if len(blanc_ids[j]) > 0
-        ]))
 
         posurines_df = pd.DataFrame(
             {
@@ -1287,7 +1367,7 @@ class Train:
             posurines_df[label] = proba_posurines[:, i]
 
         posurines_df.loc[:, 'preds'] = [
-            self.unique_labels[label] for label in posurines_df.loc[:, 'preds'].to_numpy()
+            self.unique_labels[int(label)] for label in posurines_df.loc[:, 'preds'].to_numpy()
         ]
         assert 'bact' not in posurines_df.loc[:, 'preds']
         posurines_df.to_csv(
@@ -1329,7 +1409,7 @@ class Train:
             posurines_df[label] = np.concatenate(lists['proba']['posurines'])[:, i]
 
         posurines_df.loc[:, 'preds'] = [
-            self.unique_labels[label] for label in posurines_df.loc[:, 'preds'].to_numpy()
+            self.unique_labels[int(label)] for label in posurines_df.loc[:, 'preds'].to_numpy()
         ]
         # assert 'bact' not in posurines_df.loc[:, 'preds']
         posurines_df.to_csv(
@@ -1365,7 +1445,8 @@ class Train:
         ])
         if self.args.groupkfold:
             reps_to_use = [0 if np.argwhere(self.uniques['batches'] == 'b11')[0][0] in lists['batches']['train'][i] or (
-                np.argwhere(self.uniques['batches'] == 'b10')[0][0] not in lists['batches']['train'][i] or np.argwhere(self.uniques['batches'] == 'bpatients')[0][0] not in lists['batches']['train'][i]
+                np.argwhere(self.uniques['batches'] == 'b10')[0][0] not in lists['batches']['train'][i] or
+                np.argwhere(self.uniques['batches'] == 'bpatients')[0][0] not in lists['batches']['train'][i]
             ) else 1 for i in range(len(lists['proba']['posurines']))]
             # use only the reps of reps_to_use in the proba
             lists['proba']['posurines'] = np.stack([
@@ -1393,7 +1474,7 @@ class Train:
             posurines_df[label] = proba_posurines[:, i]
 
         posurines_df.loc[:, 'preds'] = [
-            self.unique_labels[label] for label in posurines_df.loc[:, 'preds'].to_numpy()
+            self.unique_labels[int(label)] for label in posurines_df.loc[:, 'preds'].to_numpy()
         ]
         assert 'bact' not in posurines_df.loc[:, 'preds']
         posurines_df.to_csv(
@@ -1458,10 +1539,10 @@ class Train:
                 }
             )
         df_valid.loc[:, 'preds'] = [
-            self.unique_labels[label] for label in df_valid.loc[:, 'preds'].to_numpy()
+            self.unique_labels[int(label)] for label in df_valid.loc[:, 'preds'].to_numpy()
         ]
         df_test.loc[:, 'preds'] = [
-            self.unique_labels[label] for label in df_test.loc[:, 'preds'].to_numpy()
+            self.unique_labels[int(label)] for label in df_test.loc[:, 'preds'].to_numpy()
         ]
 
         df_valid.to_csv(f'{self.log_path}/saved_models/{self.args.model_name}_valid_individual_results.csv')
@@ -1483,9 +1564,9 @@ class Train:
     def save_calibration_curves(self, lists, run):
         # Use cross validation iterations stored in lists, loop over dont concat
         # import calibration_curve
-        for group in ['train', 'valid', 'test']:
-            for i in range(len(lists['proba'][group])):
-                try:
+        for group in ['train', 'valid', 'test', 'posurines']:
+            try:
+                for i in range(len(lists['proba'][group])):
                     fig = plt.figure()
                     proba = lists['proba'][group][i]
                     classes = lists['classes'][group][i]
@@ -1502,12 +1583,12 @@ class Train:
                     run[f'{group}/calibration'].upload(
                         f'{self.log_path}/ROC/{self.name}_{self.args.model_name}_{group}_calibration.png'
                     )
-                except Exception as e:
-                    print('Problem in save_calibration_curves', e)
+            except Exception as e:
+                print('Problem in save_calibration_curves', e)
 
     def save_calibration_intervals(self, lists, run):
-        for group in ['train', 'valid', 'test']:
-            try:
+        try:
+            for group in ['train', 'valid', 'test', 'posurines']:
                 fig, ax = plt.subplots()
                 for j, label in enumerate(self.unique_labels):
                     # Collect all FOP and MPV from each cross-validation iteration
@@ -1534,9 +1615,9 @@ class Train:
                 run[f'{group}/calibration_CI'].upload(
                     f'{self.log_path}/ROC/{self.name}_{self.args.model_name}_{group}_calibration_CI.png'
                 )
-            except Exception as e:
-                print(f"Error generating calibration curve for {group}: {e}")
-                pass
+        except Exception as e:
+            print(f"Error generating calibration curve for {group}: {e}")
+            pass
 
     def plot_calibration_intervals(results, ax):
         # Compute mean and standard deviation for calibration curve
@@ -1572,13 +1653,22 @@ class Train:
                                            f"{self.log_path}/ROC/{self.name}_{self.args.model_name}_valid",
                                            binary=self.args.binary, acc=lists['acc']['valid'], run=run)
         except Exception as e:
-            print('Problem in save_roc_curves train:', e)
+            print('Problem in save_roc_curves valid:', e)
         try:
             self.best_roc_test = plot_roc(lists['proba']['test'], lists['classes']['test'], self.unique_labels,
                                           f"{self.log_path}/ROC/{self.name}_{self.args.model_name}_test",
                                           binary=self.args.binary, acc=lists['acc']['test'], run=run)
         except Exception as e:
-            print('Problem in save_roc_curves train:', e)
+            print('Problem in save_roc_curves test:', e)
+        
+        try:
+            self.best_roc_posurines = plot_roc(
+                lists['proba']['posurines'], lists['classes']['posurines'], self.unique_labels,
+                f"{self.log_path}/ROC/{self.name}_{self.args.model_name}_posurines",
+                binary=self.args.binary, acc=lists['acc']['posurines'], run=run
+            )
+        except Exception as e:
+            print('Problem in save_roc_curves posurines:', e)
 
     def save_thresholds_curve0(self, group, df, run):
         accs = []
@@ -1634,7 +1724,7 @@ class Train:
             )
 
             df.loc[:, 'preds'] = [
-                self.unique_labels[label] for label in df.loc[:, 'preds'].to_numpy()
+                self.unique_labels[int(label)] for label in df.loc[:, 'preds'].to_numpy()
             ]
 
             if len(np.unique(df.loc[:, 'batches'].to_numpy())) == 1:
@@ -1726,15 +1816,27 @@ class Train:
             f'{self.log_path}/saved_models/scaler_{scaler_name}.pkl'
         )
 
-    def remove_models(self, scaler_name):
-        """
-        Remove all models saved with the given scaler_name
-        """
-        for f in os.listdir(f'{self.log_path}/saved_models/'):
-            if f.startswith(f'{self.args.model_name}_{scaler_name}') and f.endswith('tmp.pkl'):
-                os.remove(f'{self.log_path}/saved_models/{f}')
-        os.remove(f'{self.log_path}/saved_models/scaler_{scaler_name}_tmp.pkl')
-        os.remove(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl')
+    def remove_models(self, scaler_name: str):
+        try:
+            with suppress(FileNotFoundError):
+                os.remove(f'{self.log_path}/saved_models/scaler_{scaler_name}_tmp.pkl')
+        except Exception as e:
+            print(f"Error removing scaler tmp file: {e}")
+        try:
+            with suppress(FileNotFoundError):
+                os.remove(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl')
+        except Exception as e:
+            print(f"Error removing columns_after_threshold tmp file: {e}")
+        try:
+            with suppress(FileNotFoundError):
+                os.remove(f'{self.log_path}/saved_models/{self.args.model_name}_state_tmp.pth')
+        except Exception as e:
+            print(f"Error removing model state tmp file: {e}")
+        try:
+            with suppress(FileNotFoundError):
+                os.remove(f'{self.log_path}/saved_models/{self.args.model_name}_tmp.pth')
+        except Exception as e:
+            print(f"Error removing model tmp file: {e}")
 
     def dump_models(self, models, scaler_name, lists):
         # Save unique labels
@@ -1790,8 +1892,8 @@ class Train:
 
     def save_confusion_matrices(self, lists, run):
         relevant_samples = []
-        posurines_df, lists = self.make_predictions(lists, run)
-        if len(posurines_df) > 0:
+        if len(lists['preds']['posurines']) > 0:
+            posurines_df, lists = self.make_predictions(lists, run)
             relevant_samples = [
                 i for i, l in enumerate(posurines_df.loc[:, 'labels'].to_numpy()) if l in self.unique_labels
             ]
@@ -1827,7 +1929,8 @@ class Train:
                                       f"{self.name}_{self.args.model_name}_posurines",
                                       acc=lists['acc']['posurines'], mcc=lists['mcc']['posurines'], group='posurines')
                 run['confusion_matrix/posurines'].upload(fig)
-
+        else:
+            posurines_df = pd.DataFrame([])
         groups = ['train', 'valid', 'test']
         for group in groups:
             fig = get_confusion_matrix(np.concatenate(lists['classes'][group]),
