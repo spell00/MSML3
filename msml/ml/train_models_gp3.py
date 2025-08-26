@@ -14,10 +14,19 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.decomposition import PCA
 import pandas as pd
-from .dataset import get_data_all
+try:
+    from .dataset import get_data_all  # when run as module: python -m msml.ml.train_models_gp3
+except ImportError:
+    # Fallback when executed directly: python msml/ml/train_models_gp3.py
+    import os, sys
+    this_dir = os.path.dirname(os.path.abspath(__file__))
+    pkg_root = os.path.dirname(os.path.dirname(this_dir))
+    if pkg_root not in sys.path:
+        sys.path.insert(0, pkg_root)
+    from msml.ml.dataset import get_data_all
+    from msml.ml.train_xgboost import Train_xgboost
+    from msml.ml.train_bernn import Train_bernn
 from sklearn.naive_bayes import GaussianNB
-from .train_xgboost import Train_xgboost
-from .train_bernn import Train_bernn
 from bernn import TrainAEClassifierHoldout
 from msml.ml.models.train_lsm import TrainLSM
 
@@ -617,6 +626,7 @@ def get_args(batches_to_keep):
     parser.add_argument('--kan', type=int, default=0, help='Use KAN during training')
     parser.add_argument('--classif_loss', type=str, default='ce', help='Classification loss function. [ce, triplet]')
     parser.add_argument('--rec_loss', type=str, default='l1', help='Reconstruction loss function. [l1, mse]')
+    parser.add_argument('--min_features_importance', type=int, default=0, help='Minimum feature importance to consider')
 
     args = parser.parse_args()
 
@@ -702,7 +712,7 @@ def select_xgboost_features(data, uniques, concs, batch_dates, scaler, args):
     path = (
         f"results/multi/mz{args.mz}/rt{args.rt}/ms{args.ms_level}/"
         f"{args.spd}spd/thr0.0/all/"
-        f"{'-'.join(batch_dates)}_binary{args.binary}_{args.n_features}_"
+        f"{'-'.join(batch_dates)}_binary{args.binary}_-1_"
         f"gkf{args.groupkfold}_ovr{args.ovr}_"
         f"mz{args.min_mz}-{args.max_mz}rt{args.min_rt}-{args.max_rt}_"
         f"{'_'.join(concs)}/xgboost/ords_filtered/"
@@ -715,7 +725,7 @@ def select_xgboost_features(data, uniques, concs, batch_dates, scaler, args):
         top_features = feature_importance.nlargest(feature_importance.shape[0], 'importance')['feature'].values
     # Filter the data to keep only the top features
     print(f"Selected features: {top_features.shape[0]} features from initial {len(data['inputs']['all'])}")
-    data['inputs'] = {k: v[top_features] for k, v in data['inputs'].items()}
+    data['inputs'] = {k: v.loc[:, top_features] for k, v in data['inputs'].items()}
 
     return data
 
@@ -728,8 +738,8 @@ if __name__ == '__main__':
     exp = f'all_{"-".join(batch_dates)}_gkf{args.groupkfold}_{cropings}_5splits'
     path, results_path = get_path(args, exp)
     data, uniques = get_data_all(path, args)
-    if args.xgboost_features:
-        data = select_xgboost_features(data, uniques, concs, batches_to_keep, 'minmax', args)
+    # if args.xgboost_features:
+    #     data = select_xgboost_features(data, uniques, concs, batches_to_keep, 'zscore', args)
 
     # Perform EDA
     # perform_eda(data, path)
