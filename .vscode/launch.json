@@ -117,16 +117,17 @@
             "program": "~/MSML3/msml/preprocess/make_tensors_sparse_ms2_unsup_transductive.py",
             "console": "integratedTerminal",
             "justMyCode": true,
+            "python": "/home/simon/miniconda3/envs/bernn_env3/bin/python",
             "args": [
-                "--log2=inloop",
+                "--intensity_mode=logaddinloop",
                 "--make_data=1",
                 "--feature_selection=none",
                 "--n_samples=-1",
                 "--test_run=0",
                 "--threshold=.0",
-                "--mz_bin=10",
+                "--mz_bin=2",
                 "--rt_bin=10",
-                "--mz_bin_post=10",
+                "--mz_bin_post=2",
                 "--rt_bin_post=10",
                 "--min_mz=0",
                 "--max_mz=10000",
@@ -258,9 +259,9 @@
             "request": "launch",
             "program": "~/MSML3/msml/ml/train_models_gp3.py",
             "console": "integratedTerminal",
-            "python": "/home/simonp/anaconda3/envs/bernn_env3/bin/python",
+            "python": "/home/simon/miniconda3/envs/bernn_env3/bin/python",
             "env": {
-                "CUDA_VISIBLE_DEVICES": "1"
+                "CUDA_VISIBLE_DEVICES": "0"
             },
             "justMyCode": true,
             "allowMultipleSessions": true,
@@ -268,6 +269,7 @@
                 "--n_features=1000",
                 "--binary=0",
                 "--model_name=xgboost",
+                "--mode=logmax",
                 "--groupkfold=1",
                 "--ovr=0",
                 "--min_mz=0",
@@ -283,9 +285,11 @@
                 "--rt=10",
                 "--mzp=10",
                 "--rtp=10",
-                "--device=cpu",
+                "--device=cuda:0",
                 "--log_plots=1",
-                "--test=0"
+                "--test=0",
+                "--exclude_batches=culturespures",
+                "--log_dvclive=1"
             ],
         },
         {
@@ -294,14 +298,15 @@
             "request": "launch",
             "program": "~/MSML3/msml/ml/train_models_gp3.py",
             "console": "integratedTerminal",
-            "python": "/home/simonp/anaconda3/envs/bernn_env3/bin/python",
+            "python": "/home/simon/miniconda3/envs/bernn_env3/bin/python",
             "env": {
-                "CUDA_VISIBLE_DEVICES": "1"
+                "CUDA_VISIBLE_DEVICES": "0"
             },
             "justMyCode": false,
             "args": [
-                "--n_epochs=3",
-                "--n_features=1000",
+                "--n_epochs=1",
+                "--n_features=-1",
+                "--min_features_importance=0",
                 "--binary=0",
                 "--model_name=bernn",
                 "--dloss=no",
@@ -324,7 +329,12 @@
                 "--log_plots=1",
                 "--warmup_after_warmup=0",
                 "--train_after_warmup=0",
-                "--test=0"
+                "--test=0",
+                "--xgboost_features=1",
+                "--mode=logmax",
+                "--fast_hparams_optim=1",
+                "--max_warmup=15",
+                "--log_dvclive=1"
             ],
         },
         {
@@ -335,7 +345,7 @@
             "console": "integratedTerminal",
             "python": "/home/simonp/anaconda3/bin/python",
             "env": {
-                "CUDA_VISIBLE_DEVICES": "1"
+                "CUDA_VISIBLE_DEVICES": "0"
             },
             "justMyCode": true,
             "args": [
@@ -373,7 +383,7 @@
             "console": "integratedTerminal",
             "python": "/home/simonp/anaconda3/bin/python",
             "env": {
-                "CUDA_VISIBLE_DEVICES": "1"
+                "CUDA_VISIBLE_DEVICES": "0"
             },
             "justMyCode": true,
             "args": [

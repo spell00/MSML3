@@ -163,7 +163,6 @@ class Train:
     def __init__(self, name, model, data, uniques, hparams_names,
                  log_path, args, logger, log_neptune, mlops='None',
                  binary_path=None):
-        self.log_neptune = log_neptune
         self.best_roc_score = -1
         self.args = args
         self.log_path = log_path
@@ -287,7 +286,7 @@ class Train:
             all_data['inputs']['test'] = all_data['inputs']['test'].iloc[:, not_zeros_col]
             all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[:, not_zeros_col]
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             # Create a Neptune run object
             run = neptune.init_run(
                 project=NEPTUNE_PROJECT_NAME,
@@ -670,7 +669,7 @@ class Train:
         posurines_df = None  # TODO move somewhere more logical
 
         # Log in neptune the optimal iteration
-        if self.log_neptune:
+        if self.args.log_neptune:
             model["best_iteration"] = run["best_iteration"] = np.round(np.mean([x for x in best_iteration]))
             model["model_size"] = run["model_size"] = get_size_in_mb(m)
 
@@ -703,8 +702,26 @@ class Train:
                 f'{self.log_path}/saved_models/{self.args.model_name}_posurines_individual_results.csv'
             )
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             log_neptune(run, lists, best_scores)
+        if hasattr(self, 'live') and self.live is not None:
+            try:
+                to_log = {}
+                for m in ['acc', 'mcc']:
+                    if m in lists and isinstance(lists[m]['valid'], list) and len(lists[m]['valid']) > 0:
+                        to_log[f'valid/{m}'] = float(np.mean(lists[m]['valid']))
+                    if m in lists and isinstance(lists[m]['test'], list) and len(lists[m]['test']) > 0:
+                        to_log[f'test/{m}'] = float(np.mean(lists[m]['test']))
+                for k in ['ari', 'ami', 'nbe']:
+                    if k in best_scores:
+                        for g in ['train', 'valid', 'test']:
+                            if g in best_scores[k]:
+                                to_log[f'{g}/{k}'] = best_scores[k][g]
+                for k,v in to_log.items():
+                    self.live.log_metric(k, v)
+                self.live.next_step()
+            except Exception as e:
+                print('dvclive log failed', e)
             run.stop()
             model.stop()
 
@@ -767,7 +784,7 @@ class Train:
         all_data['inputs']['all'] = all_data['inputs']['all'].iloc[:, not_zeros_col]
         all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[:, not_zeros_col]
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             # Create a Neptune run object
             run = neptune.init_run(
                 project=NEPTUNE_PROJECT_NAME,
@@ -1190,6 +1207,26 @@ class Train:
             self.unique_labels[l] for l in df_test.loc[:, 'preds'].to_numpy()
         ]
 
+        # Provide batches_labels column for downstream logging consistency
+        try:
+            if 'batches_labels' not in df_valid.columns:
+                if hasattr(self, 'uniques') and 'batches_labels' in self.uniques:
+                    batch_map = {i: b for i, b in enumerate(self.uniques['batches_labels'])}
+                    df_valid['batches_labels'] = [batch_map.get(int(b), b) for b in df_valid['batches']]
+                    df_test['batches_labels'] = [batch_map.get(int(b), b) for b in df_test['batches']]
+                elif hasattr(self, 'uniques') and 'batches' in self.uniques:
+                    batch_map = {i: b for i, b in enumerate(self.uniques['batches'])}
+                    df_valid['batches_labels'] = [batch_map.get(int(b), b) for b in df_valid['batches']]
+                    df_test['batches_labels'] = [batch_map.get(int(b), b) for b in df_test['batches']]
+                else:
+                    df_valid['batches_labels'] = df_valid['batches']
+                    df_test['batches_labels'] = df_test['batches']
+        except Exception:
+            if 'batches_labels' not in df_valid.columns:
+                df_valid['batches_labels'] = df_valid.get('batches', [])
+            if 'batches_labels' not in df_test.columns:
+                df_test['batches_labels'] = df_test.get('batches', [])
+
         df_valid.to_csv(f'{self.log_path}/saved_models/{self.args.model_name}_valid_individual_results.csv')
         df_test.to_csv(f'{self.log_path}/saved_models/{self.args.model_name}_test_individual_results.csv')
         run[f'valid/individual_results'].upload(f'{self.log_path}/saved_models/{self.args.model_name}_valid_individual_results.csv')
@@ -1384,16 +1421,17 @@ class Train:
             json.dump(self.unique_labels.tolist(), read_file)
 
         # save model
-        with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_tmp.pkl', 'wb') as f:
+        mode_tag = getattr(self.args, 'mode', 'nomode')
+        with open(f'{self.log_path}/saved_models/{self.args.model_name}_{mode_tag}_{scaler_name}_{i}_tmp.pkl', 'wb') as f:
             pickle.dump(m, f)
 
         if lists is not None:
             # save indices
-            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_train_indices_tmp.pkl', 'wb') as f:
+            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{mode_tag}_{scaler_name}_{i}_train_indices_tmp.pkl', 'wb') as f:
                 pickle.dump(lists['inds']['train'][i], f)
-            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_valid_indices_tmp.pkl', 'wb') as f:
+            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{mode_tag}_{scaler_name}_{i}_valid_indices_tmp.pkl', 'wb') as f:
                 pickle.dump(lists['inds']['valid'][i], f)
-            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_test_indices_tmp.pkl', 'wb') as f:
+            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{mode_tag}_{scaler_name}_{i}_test_indices_tmp.pkl', 'wb') as f:
                 pickle.dump(lists['inds']['test'][i], f)
 
     def retrieve_best_scores(self, lists):

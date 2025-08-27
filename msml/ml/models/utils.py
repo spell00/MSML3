@@ -850,6 +850,32 @@ def add_to_mlflow(values, epoch):
         except:
             pass
 
+def add_to_dvclive(values, live, epoch):
+    """
+    Add values to the dvclive logger
+    Args:
+        values: Dict of values to be logged
+        epoch: Epoch of the values getting logged
+
+    """
+    if not np.isnan(values['rec_loss'][-1]):
+        live.log("rec_loss", values['rec_loss'][-1], epoch)
+    if not np.isnan(values['dom_loss'][-1]):
+        live.log("dom_loss", values['dom_loss'][-1], epoch)
+    if not np.isnan(values['dom_acc'][-1]):
+        live.log("dom_acc", values['dom_acc'][-1], epoch)
+    for group in list(values.keys())[4:]:
+        try:
+            if not np.isnan(values[group]['closs'][-1]):
+                live.log(f'closs/{group}', values[group]['closs'][-1], epoch)
+            if not np.isnan(values[group]['acc'][-1]):
+                live.log(f'acc/{group}/all_concentrations', values[group]['acc'][-1], epoch)
+            if not np.isnan(values[group]['mcc'][-1]):
+                live.log(f'mcc/{group}/all_concentrations', values[group]['mcc'][-1], epoch)
+            if not np.isnan(values[group]['top3'][-1]):
+                live.log(f'top3/{group}/all_concentrations', values[group]['top3'][-1], epoch)
+        except:
+            pass
 
 def count_labels(arr):
     """

@@ -10,7 +10,7 @@ from PIL import Image
 from sklearn.model_selection import StratifiedShuffleSplit
 
 
-def interactions_mean_matrix(shap_interactions, X, run, group):
+def interactions_mean_matrix(shap_interactions, X, run, group, log_path, mlops='neptune'):
     # Get absolute mean of matrices
     mean_shap = np.abs(shap_interactions).mean(0)
     df = pd.DataFrame(mean_shap, index=X.columns, columns=X.columns)
@@ -24,8 +24,13 @@ def interactions_mean_matrix(shap_interactions, X, run, group):
     sns.heatmap(df, cmap='coolwarm', annot=True, fmt='.3g', cbar=False)
     plt.yticks(rotation=0)
     f = plt.gcf()
-    run[f'shap/interactions_matrix/{group}_values'].upload(f)
-    plt.close(f)
+    if mlops == 'neptune':
+        run[f'shap/interactions_matrix/{group}_values'].upload(f)
+    if mlops == 'dvclive':
+        shap_path = f"{log_path}/{group}_shap_interactions.png"
+        f.savefig(shap_path)
+        plt.close(f)
+        run.log_artifact(shap_path)
 
 
 def make_summary_plot(df, values, group, run, 
@@ -35,6 +40,11 @@ def make_summary_plot(df, values, group, run,
     f = plt.gcf()
     if mlops == 'neptune':
         run[f'shap/summary_{category}/{group}_values'].upload(f)
+    if mlops == 'dvclive':
+        shap_path = f"{log_path}/{group}_shap_summary.png"
+        f.savefig(shap_path)
+        plt.close(f)
+        run.log_artifact(shap_path)
 
     plt.close(f)
 
@@ -44,6 +54,11 @@ def make_force_plot(df, values, features, group, run, log_path, category='explai
     f = plt.gcf()
     if mlops == 'neptune':
         run[f'shap/force_{category}/{group}_values'].upload(f)
+    if mlops == 'dvclive':
+        shap_path = f"{log_path}/{group}_shap_force.png"
+        f.savefig(shap_path)
+        plt.close(f)
+        run.log_artifact(shap_path)
 
     plt.close(f)
 
@@ -53,6 +68,11 @@ def make_deep_beeswarm(df, values, group, run, log_path, category='explainer', m
     f = plt.gcf()
     if mlops == 'neptune':
         run[f'shap/beeswarm_{category}/{group}_values'].upload(f)
+    if mlops == 'dvclive':
+        shap_path = f"{log_path}/{group}_shap_beeswarm.png"
+        f.savefig(shap_path)
+        plt.close(f)
+        run.log_artifact(shap_path)
 
     plt.close(f)
 
@@ -66,6 +86,11 @@ def make_decision_plot(df, values, misclassified, feature_names, group, run, log
     if mlops == 'neptune':
         run[f'shap/decision_{category}/{group}_values'].upload(f)
         run[f'shap/decision_{category}/{group}_values'].upload(f)
+    if mlops == 'dvclive':
+        shap_path = f"{log_path}/{group}_shap_decision.png"
+        f.savefig(shap_path)
+        plt.close(f)
+        run.log_artifact(shap_path)
     plt.close(f)
 
 
@@ -75,6 +100,11 @@ def make_decision_deep(df, values, misclassified, feature_names, group, run, log
     if mlops == 'neptune':
         run[f'shap/decision_{category}/{group}_values'].upload(f)
         run[f'shap/decision_{category}/{group}_values'].upload(f)
+    if mlops == 'dvclive':
+        shap_path = f"{log_path}/{group}_shap_decision.png"
+        f.savefig(shap_path)
+        plt.close(f)
+        run.log_artifact(shap_path)
     plt.close(f)
 
 
@@ -83,6 +113,11 @@ def make_multioutput_decision_plot(df, values, group, run, log_path, category='e
     f = plt.gcf()
     if mlops == 'neptune':
         run[f'shap/multioutput_decision_{category}/{group}_values'].upload(f)
+    if mlops == 'dvclive':
+        shap_path = f"{log_path}/{group}_shap_multioutput_decision.png"
+        f.savefig(shap_path)
+        plt.close(f)
+        run.log_artifact(shap_path)
     plt.close(f)
 
 
@@ -92,6 +127,11 @@ def make_group_difference_plot(values, mask, group, run, log_path, category='exp
     if mlops == 'neptune':
         # run[f'shap/gdiff_{category}/{group}'].upload(f)
         run[f'shap/gdiff_{category}/{group}'].upload(f)
+    if mlops == 'dvclive':
+        shap_path = f"{log_path}/{group}_shap_group_difference.png"
+        f.savefig(shap_path)
+        plt.close(f)
+        run.log_artifact(shap_path)
     plt.close(f)
 
 
@@ -101,6 +141,12 @@ def make_beeswarm_plot(values, group, run, log_path, category='explainer', mlops
     if mlops == 'neptune':
         # run[f'shap/beeswarm_{category}/{group}'].upload(f)
         run[f'shap/beeswarm_{category}/{group}'].upload(f)
+    if mlops == 'dvclive':
+        shap_path = f"{log_path}/{group}_shap_beeswarm.png"
+        f.savefig(shap_path)
+        plt.close(f)
+        run.log_artifact(shap_path)
+
     plt.close(f)
 
 
@@ -110,6 +156,12 @@ def make_heatmap(values, group, run, log_path, category='explainer', mlops='nept
     if mlops == 'neptune':
         # run[f'shap/heatmap_{category}/{group}'].upload(f)
         run[f'shap/heatmap_{category}/{group}'].upload(f)
+    if mlops == 'dvclive':
+        shap_path = f"{log_path}/{group}_shap_heatmap.png"
+        f.savefig(shap_path)
+        plt.close(f)
+        run.log_artifact(shap_path)
+
     plt.close(f)
 
 
@@ -120,6 +172,12 @@ def make_heatmap_deep(values, group, run, log_path, category='explainer', mlops=
     if mlops == 'neptune':
         # run[f'shap/heatmap_{category}/{group}'].upload(f)
         run[f'shap/heatmap_{category}/{group}'].upload(f)
+    if mlops == 'dvclive':
+        shap_path = f"{log_path}/{group}_shap_heatmap.png"
+        f.savefig(shap_path)
+        plt.close(f)
+        run.log_artifact(shap_path)
+
     plt.close(f)
 
 
@@ -130,6 +188,12 @@ def make_barplot(df, y, values, group, run, log_path, category='explainer', mlop
     f = plt.gcf()
     if mlops == 'neptune':
         run[f'shap/bar_{category}/{group}'].upload(f)
+    if mlops == 'dvclive':
+        shap_path = f"{log_path}/{group}_shap_bar.png"
+        f.savefig(shap_path)
+        plt.close(f)
+        run.log_artifact(shap_path)
+
     plt.close(f)
 
 
@@ -139,6 +203,12 @@ def make_bar_plot(df, values, group, run, log_path, category='explainer', mlops=
     if mlops == 'neptune':
         # run[f'shap/barold_{category}/{group}'].upload(f)
         run[f'shap/barold_{category}/{group}'].upload(f)
+    if mlops == 'dvclive':
+        shap_path = f"{log_path}/{group}_shap_barold.png"
+        f.savefig(shap_path)
+        plt.close(f)
+        run.log_artifact(shap_path)
+
     plt.close(f)
 
 
@@ -147,10 +217,16 @@ def make_dependence_plot(df, values, var, group, run, log_path, category='explai
     f = plt.gcf()
     if mlops == 'neptune':
         run[f'shap/dependence_{category}/{group}'].upload(f)
+    if mlops == 'dvclive':
+        shap_path = f"{log_path}/{group}_shap_dependence.png"
+        f.savefig(shap_path)
+        plt.close(f)
+        run.log_artifact(shap_path)
+
     plt.close(f)
 
 
-def log_explainer(run, group, args_dict):
+def log_explainer(run, group, args_dict, mlops='neptune'):
     model = args_dict['model']
     model_name = args_dict['model_name']
     x_df = args_dict['inputs'][group]
@@ -208,14 +284,12 @@ def log_explainer(run, group, args_dict):
             # Dropping the base value
             shap_values_df = shap_values_df.drop('bv')
             shap_values_df.to_csv(f"{log_path}/{group}_linear_shap_{label}_abs.csv")
-            run[f'shap/linear_{group}_{label}'].upload(f"{log_path}/{group}_linear_shap_{label}_abs.csv")
             shap_values_df.transpose().hist(bins=100, figsize=(6.4, 4.8))
             plt.xlabel('SHAP value')
             plt.ylabel('Frequency')
             plt.savefig(f"{log_path}/{group}_linear_shap_{label}_hist_abs.png")
             plt.close()
             plt.title(f'base_value: {np.round(bv, 2)}')
-            run[f'shap/linear_{group}_{label}_hist'].upload(f"{log_path}/{group}_linear_shap_{label}_hist_abs.png")
             # start x axis at 0
             shap_values_df.abs().sort_values(ascending=False).plot(kind='kde', figsize=(6.4, 4.8))
             # shap_values_df.transpose().cumsum().hist(bins=100, figsize=(6.4, 4.8))
@@ -225,7 +299,6 @@ def log_explainer(run, group, args_dict):
             plt.title(f'base_value: {np.round(bv, 2)}')
             plt.savefig(f"{log_path}/{group}_linear_shap_{label}_kde_abs.png")
             plt.close()
-            run[f'shap/linear_{group}_{label}_kde'].upload(f"{log_path}/{group}_linear_shap_{label}_kde_abs.png")
 
             values, base = np.histogram(shap_values_df.abs(), bins=40)
             # evaluate the cumulative
@@ -240,7 +313,16 @@ def log_explainer(run, group, args_dict):
             plt.title(f'base_value: {np.round(bv, 2)}')
             plt.savefig(f"{log_path}/{group}_linear_shap_{label}_cumulative_abs.png")
             plt.close()
-            run[f'shap/linear_{group}_{label}_cumulative_abs'].upload(f"{log_path}/{group}_linear_shap_{label}_cumulative_abs.png")
+            if mlops == 'neptune':
+                run[f'shap/linear_{group}_{label}'].upload(f"{log_path}/{group}_linear_shap_{label}_abs.csv")
+                run[f'shap/linear_{group}_{label}_hist'].upload(f"{log_path}/{group}_linear_shap_{label}_hist_abs.png")
+                run[f'shap/linear_{group}_{label}_kde'].upload(f"{log_path}/{group}_linear_shap_{label}_kde_abs.png")
+                run[f'shap/linear_{group}_{label}_cumulative_abs'].upload(f"{log_path}/{group}_linear_shap_{label}_cumulative_abs.png")
+            if mlops == 'dvclive':
+                run.log_artifact(f"{log_path}/{group}_linear_shap_{label}_abs.csv")
+                run.log_artifact(f"{log_path}/{group}_linear_shap_{label}_hist_abs.png")
+                run.log_artifact(f"{log_path}/{group}_linear_shap_{label}_kde_abs.png")
+                run.log_artifact(f"{log_path}/{group}_linear_shap_{label}_cumulative_abs.png")
         except:
             pass
     else:
@@ -256,7 +338,6 @@ def log_explainer(run, group, args_dict):
 
             # Save the shap values
             shap_values_df.to_csv(f"{log_path}/{group}_shap.csv")
-            run[f'shap/{group}_{label}'].upload(f"{log_path}/{group}_shap.csv")
 
             shap_values_df = shap_values_df.abs()
             shap_values_df = shap_values_df.sum(0)
@@ -265,7 +346,6 @@ def log_explainer(run, group, args_dict):
 
             # Save the shap values
             shap_values_df.to_csv(f"{log_path}/{group}_shap_abs.csv")
-            run[f'shap/{group}_{label}'].upload(f"{log_path}/{group}_shap_abs.csv")
 
             try:
                 # Getting the base value
@@ -274,7 +354,6 @@ def log_explainer(run, group, args_dict):
                 # Dropping the base value
                 shap_values_df = shap_values_df.drop('bv')
                 shap_values_df.to_csv(f"{log_path}/{group}_linear_shap_{label}_abs.csv")
-                run[f'shap/linear_{group}_{label}'].upload(f"{log_path}/{group}_linear_shap_{label}_abs.csv")
 
                 shap_values_df.transpose().hist(bins=100, figsize=(6.4, 4.8))
                 plt.xlabel('SHAP value')
@@ -283,7 +362,6 @@ def log_explainer(run, group, args_dict):
                 plt.close()
                 plt.title(f'base_value: {np.round(bv, 2)}')
                 # if i == 0:
-                run[f'shap/linear_{group}_{label}_hist'].upload(f"{log_path}/{group}_linear_shap_{label}_hist_abs.png")
                 # start x axis at 0
                 shap_values_df.abs().sort_values(ascending=False).plot(kind='kde', figsize=(6.4, 4.8))
                 plt.xlabel('SHAP value')
@@ -294,7 +372,6 @@ def log_explainer(run, group, args_dict):
                 plt.close()
                 plt.title(f'base_value: {np.round(bv, 2)}')
                 # if i == 0:
-                run[f'shap/linear_{group}_{label}_kde'].upload(f"{log_path}/{group}_linear_shap_{label}_kde_abs.png")
 
                 values, base = np.histogram(shap_values_df.abs(), bins=40)
                 # evaluate the cumulative
@@ -310,7 +387,20 @@ def log_explainer(run, group, args_dict):
                 plt.close()
                 plt.title(f'base_value: {np.round(bv, 2)}')
                 # if i == 0:
-                run[f'shap/linear_{group}_{label}_cumulative_abs'].upload(f"{log_path}/{group}_linear_shap_{label}_cumulative_abs.png")
+                if mlops == 'neptune':
+                    run[f'shap/{group}_{label}'].upload(f"{log_path}/{group}_shap.csv")
+                    run[f'shap/{group}_{label}'].upload(f"{log_path}/{group}_shap_abs.csv")
+                    run[f'shap/linear_{group}_{label}'].upload(f"{log_path}/{group}_linear_shap_{label}_abs.csv")
+                    run[f'shap/linear_{group}_{label}_hist'].upload(f"{log_path}/{group}_linear_shap_{label}_hist_abs.png")
+                    run[f'shap/linear_{group}_{label}_kde'].upload(f"{log_path}/{group}_linear_shap_{label}_kde_abs.png")
+                    run[f'shap/linear_{group}_{label}_cumulative_abs'].upload(f"{log_path}/{group}_linear_shap_{label}_cumulative_abs.png")
+                if mlops == 'dvclive':
+                    run.log_artifact(f"{log_path}/{group}_shap.csv")
+                    run.log_artifact(f"{log_path}/{group}_shap_abs.csv")
+                    run.log_artifact(f"{log_path}/{group}_linear_shap_{label}_abs.csv")
+                    run.log_artifact(f"{log_path}/{group}_linear_shap_{label}_hist_abs.png")
+                    run.log_artifact(f"{log_path}/{group}_linear_shap_{label}_kde_abs.png")
+                    run.log_artifact(f"{log_path}/{group}_linear_shap_{label}_cumulative_abs.png")
 
             except:
                 pass
@@ -335,7 +425,7 @@ def log_explainer(run, group, args_dict):
 
 
 def log_kernel_explainer(model, x_df, misclassified, 
-                         labels, group, run, cats, log_path):
+                         labels, group, run, cats, log_path, mlops='neptune'):
     unique_classes = np.unique(labels)
 
     # Convert my pandas dataframe to numpy
@@ -355,17 +445,17 @@ def log_kernel_explainer(model, x_df, misclassified,
         shap_values_df.iloc[i].to_csv(f"{log_path}/{group}_kernel_shap_{label}.csv")
     # shap_values = pd.DataFrame(np.concatenate(s))
     # Summary plot
-    make_summary_plot(x_df, shap_values, group, run, 'Kernel')
+    make_summary_plot(x_df, shap_values, group, run, 'Kernel', mlops=mlops)
 
-    make_bar_plot(x_df, shap_values_df.iloc[1], group, run, 'localKernel')
+    make_bar_plot(x_df, shap_values_df.iloc[1], group, run, 'localKernel', mlops=mlops)
 
-    make_decision_plot(explainer.expected_value[0], shap_values[0], misclassified, x_df.columns, group, run, 'Kernel')
+    make_decision_plot(explainer.expected_value[0], shap_values[0], misclassified, x_df.columns, group, run, 'Kernel', mlops=mlops)
 
     mask = np.array([np.argwhere(x[0] == 1)[0][0] for x in cats])
-    make_group_difference_plot(x_df.sum(1).to_numpy(), mask, group, run, 'Kernel')
+    make_group_difference_plot(x_df.sum(1).to_numpy(), mask, group, run, 'Kernel', mlops=mlops)
 
 
-def log_shap(run, args_dict):
+def log_shap(run, args_dict, mlops):
     # explain all the predictions in the test set
     # explainer = shap.KernelExplainer(svc_linear.predict_proba, X_train[:100])
     os.makedirs(args_dict['log_path'], exist_ok=True)
@@ -378,14 +468,19 @@ def log_shap(run, args_dict):
 
         # TODO Problem with not enough memory...
         try:
-            run = log_explainer(run, group, args_dict)
+            run = log_explainer(run, group, args_dict, mlops=mlops)
+            if mlops == 'neptune':
+                run['log_shap'] = 1
+            elif mlops == 'dvclive':
+                run.log_metric("log_shap", 1)
+
         except:
             print(f"Problem with logging {group}")
             # pass
         # log_kernel_explainer(ae, X_test_df, misclassified,
         #                         best_lists[group]['labels'], group, run,
         #                         best_lists[group]['labels'], log_path
-        #                         )
+        #                         , mlops=mlops)
         return run
 
 
@@ -399,7 +494,7 @@ def save_images_and_csv3d(path, final, label, min_parent):
     del im
 
 
-def make_images_shap(bins, shap_values, label, run, log_path):
+def make_images_shap(bins, shap_values, label, run, log_path, mlops='neptune'):
     min_parent_mz = np.unique(np.array([float(x.split('_')[0]) for x in list(shap_values.index)]))
     max_min_parent_mz = np.max(min_parent_mz)
     min_min_parent_mz = np.min(min_parent_mz)
@@ -449,5 +544,12 @@ def make_images_shap(bins, shap_values, label, run, log_path):
         df = pd.DataFrame(df, columns=final[min_parent].columns, index=final[min_parent].index)
         save_images_and_csv3d(log_path, df, label, min_parent)
         if i == 10 and label == 0:
-            run[f'shap/images/{min_parent}'].upload(f"{log_path}/shap_images3d/{min_parent}/{label}.png")
+            if mlops == 'neptune':
+                run[f'shap/csv/{min_parent}'].upload(f"{log_path}/shap_csv3d/{min_parent}/{label}.csv")
+                run[f'shap/images/{min_parent}'].upload(f"{log_path}/shap_images3d/{min_parent}/{label}.png")
+                run[f'shap/linear_{min_parent}_{label}'].upload(f"{log_path}/shap_images3d/{min_parent}/{label}.png")
+            if mlops == 'dvclive':
+                run.log_artifact(f"{log_path}/shap_images3d/{min_parent}/{label}.png")
+                run.log_artifact(f"{log_path}/shap_csv3d/{min_parent}/{label}.csv")
+                run.log_artifact(f"{log_path}/shap_images3d/{min_parent}/{label}.png")
         # run[f'shap/images/{min_parent}'].upload(f"{log_path}/shap_images3d//{min_parent}/{label}.csv")

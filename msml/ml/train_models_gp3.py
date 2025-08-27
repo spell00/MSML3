@@ -23,9 +23,9 @@ except ImportError:
     pkg_root = os.path.dirname(os.path.dirname(this_dir))
     if pkg_root not in sys.path:
         sys.path.insert(0, pkg_root)
-    from msml.ml.dataset import get_data_all
-    from msml.ml.train_xgboost import Train_xgboost
-    from msml.ml.train_bernn import Train_bernn
+from msml.ml.dataset import get_data_all
+from msml.ml.train_xgboost import Train_xgboost
+from msml.ml.train_bernn import Train_bernn
 from sklearn.naive_bayes import GaussianNB
 from bernn import TrainAEClassifierHoldout
 from msml.ml.models.train_lsm import TrainLSM
@@ -319,9 +319,9 @@ def create_objective(train, args):
                     'threshold': trial.suggest_float('threshold', 0.0, 0.5),
                     'p': trial.suggest_float('p', 0.0, 0.5),
                     'g': trial.suggest_float('g', 0.0, 0.5),
-                    'max_depth': trial.suggest_int('max_depth', 4, 5),
+                    'max_depth': trial.suggest_int('max_depth', 1, 8),
                     'early_stopping_rounds': trial.suggest_float('early_stopping_rounds', 10, 20),
-                    'n_estimators': trial.suggest_int('n_estimators', 1, 1000),
+                    'n_estimators': trial.suggest_int('n_estimators', 10, 1000),
                     'scaler': trial.suggest_categorical("scaler", ['zscore', 'minmax']),
                 }
             else:
@@ -329,10 +329,11 @@ def create_objective(train, args):
                     'threshold': trial.suggest_float('threshold', 0.0, 0.5),
                     'p': trial.suggest_float('p', 0.0, 0.5),
                     'g': trial.suggest_float('g', 0.0, 0.5),
-                    'max_depth': trial.suggest_int('max_depth', 4, 5),
+                    'max_depth': trial.suggest_int('max_depth', 1, 8),
                     'early_stopping_rounds': trial.suggest_float('early_stopping_rounds', 10, 20),
                     'n_estimators': trial.suggest_int('n_estimators', 1, 2),
-                    'scaler': trial.suggest_categorical("scaler", ['minmax', 'minmax2', 'robust', 'standard', 'minmax_per_batch', 'standard_per_batch', 'robust_per_batch']),
+                    # 'scaler': trial.suggest_categorical("scaler", ['minmax', 'minmax2', 'robust', 'standard', 'minmax_per_batch', 'standard_per_batch', 'robust_per_batch']),
+                    'scaler': trial.suggest_categorical("scaler", ['standard', 'zscore']),
                 }
 
         elif args.model_name == 'bernn':
@@ -596,6 +597,7 @@ def get_args(batches_to_keep):
     parser.add_argument("--log_plots", type=int, default=1)
     parser.add_argument("--log_metrics", type=int, default=1)
     parser.add_argument("--log_neptune", type=int, default=1)
+    parser.add_argument("--log_dvclive", type=int, default=0, help="Enable dvclive metric logging")
     parser.add_argument("--prune_threshold", type=float, default=0)
     parser.add_argument("--dloss", type=str, default='DANN')
     parser.add_argument("--warmup_after_warmup", type=int, default=1)
@@ -617,9 +619,9 @@ def get_args(batches_to_keep):
     parser.add_argument('--use_smoothing', type=int, default=0)
     parser.add_argument('--variational', type=int, default=0)
     parser.add_argument('--early_stop', type=int, default=50, help='Use early stopping during training')
-    parser.add_argument('--early_warmup_stop', type=int, default=10, help='Use early stopping during warmup')
+    parser.add_argument('--early_warmup_stop', type=int, default=50, help='Use early stopping during warmup')
     parser.add_argument('--n_layers', type=int, default=2, help='Number of layers in the classifier')
-    parser.add_argument('--ae_layers_max_neurons', type=str, default='1000', help='Maximum number of neurons in the AE layers')
+    parser.add_argument('--ae_layers_max_neurons', type=str, default='10000', help='Maximum number of neurons in the AE layers')
     parser.add_argument('--scheduler', type=str, default='ReduceLROnPlateau', help='Learning rate scheduler type')
     parser.add_argument('--xgboost_features', type=int, default=0, help='Use xgboost top parameters')
     parser.add_argument('--clip_val', type=float, default=0.0, help='Gradient clipping value')
@@ -627,10 +629,15 @@ def get_args(batches_to_keep):
     parser.add_argument('--classif_loss', type=str, default='ce', help='Classification loss function. [ce, triplet]')
     parser.add_argument('--rec_loss', type=str, default='l1', help='Reconstruction loss function. [l1, mse]')
     parser.add_argument('--min_features_importance', type=int, default=0, help='Minimum feature importance to consider')
+    parser.add_argument('--exclude_batches', type=str, default='', help='Comma-separated batch names (substrings) to exclude (case-insensitive)')
 
     args = parser.parse_args()
 
     concs = args.concs.split(',')
+    if args.exclude_batches:
+        args.exclude_batches = [x.strip().lower() for x in args.exclude_batches.split(',') if x.strip()]
+    else:
+        args.exclude_batches = []
     args = make_args(args, batches_to_keep, concs)
 
     return args
@@ -642,7 +649,7 @@ def get_path(args, exp):
         f'ms{args.ms_level}/combat{args.combat}/shift{args.shift}/none/' \
         f'{args.mode}/{args.features_selection}/{exp}'
     results_path = f'results/multi/mz{args.mz}/rt{args.rt}/ms{args.ms_level}/{args.spd}spd/thr{args.threshold}/' \
-        f'{args.train_on}/{args.exp_name}/{args.model_name}/'
+        f'{args.mode}/{args.train_on}/{args.exp_name}/{args.model_name}/'
     return path, results_path
 
 
@@ -750,12 +757,10 @@ if __name__ == '__main__':
     cfr, Train, args = get_model(args)
     if args.model_name == 'lsm':
         train = Train(name="inputs", model=None, data=data, uniques=uniques,
-                      log_path=results_path, args=args, log_metrics=args.log_metrics,
-                      logger=None, log_neptune=args.log_neptune, mlops='None')
+                      log_path=results_path, args=args, logger=None)
     else:
         train = Train(name="inputs", model=cfr, data=data, uniques=uniques,
-                      log_path=results_path, args=args, log_metrics=args.log_metrics,
-                      logger=None, log_neptune=args.log_neptune, mlops='None')
+                      log_path=results_path, args=args, logger=None)
 
     # Create and run the Optuna study
     study = optuna.create_study(

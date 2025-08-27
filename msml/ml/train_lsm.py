@@ -718,7 +718,7 @@ class Train_bernn(TrainAE, Train):
         if self.log_inputs and not self.logged_inputs:
             data['inputs']['all'].to_csv(
                 f'{self.complete_log_path}/{self.args.berm}_inputs.csv')
-            if self.log_neptune:
+            if self.args.log_neptune:
                 run["inputs.csv"].track_files(f'{self.complete_log_path}/{self.args.berm}_inputs.csv')
             # log_input_ordination(loggers['logger'], data, self.scaler, epoch)
             # if self.pools:
@@ -792,14 +792,14 @@ class Train_bernn(TrainAE, Train):
             traces.pop('urinespositives_pool', None)
             values = log_traces(traces, values)
             # Remove pool metrics
-            if self.log_tb:
+            if self.args.log_tb:
                 try:
                     add_to_logger(values, loggers['logger'], epoch)
                 except Exception as e:
                     print(f"Problem with add_to_logger: {e}")
-            if self.log_neptune:
+            if self.args.log_neptune:
                 add_to_neptune(run, values)
-            if self.log_mlflow:
+            if self.args.log_mlflow:
                 add_to_mlflow(values, epoch)
             if np.mean(values['valid']['mcc'][-self.args.n_agg:]) > self.best_mcc and len(
                     values['valid']['mcc']) >= self.args.n_agg:
@@ -850,7 +850,7 @@ class Train_bernn(TrainAE, Train):
             if self.args.prune_threshold > 0:
                 n_neurons = ae.prune_model_paperwise(False, False, weight_threshold=self.args.prune_threshold)
                 # If save neptune is True, save the model
-                if self.log_neptune:
+                if self.args.log_neptune:
                     log_num_neurons(run, n_neurons, init_n_neurons)
 
         self.best_mccs += [self.best_mcc]
@@ -957,7 +957,7 @@ class Train_bernn(TrainAE, Train):
             all_data['inputs']['test'] = all_data['inputs']['test'].iloc[:, not_zeros_col]
             all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[:, not_zeros_col]
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             # Create a Neptune run object
             run = neptune.init_run(
                 project=NEPTUNE_PROJECT_NAME,
@@ -1388,7 +1388,7 @@ class Train_bernn(TrainAE, Train):
         posurines_df = None  # TODO move somewhere more logical
 
         # Log in neptune the optimal iteration
-        if self.log_neptune:
+        if self.args.log_neptune:
             run["best_iteration"] = np.round(np.mean([x for x in best_iteration]))
             run["model_size"] = get_size_in_mb(self.ae)
 
@@ -1463,7 +1463,7 @@ class Train_bernn(TrainAE, Train):
                 f'{self.log_path}/saved_models/{self.args.model_name}_posurines_individual_results.csv'
             )
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             log_neptune(run, lists, best_scores)
             run.stop()
             # model.stop()

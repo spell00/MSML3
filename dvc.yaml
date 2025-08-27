@@ -1,0 +1,12 @@
+params:
+- dvc_logs/params.yaml
+metrics:
+- dvc_logs/metrics.json
+stages:
+  train:
+    cmd: python msml/ml/train_models_gp3.py
+    deps:
+    - msml/ml/train_models_gp3.py
+plots:
+- dvc_logs/plots/metrics:
+    x: step

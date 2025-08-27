@@ -1,0 +1,9 @@
+schema: '2.0'
+stages:
+  train:
+    cmd: python msml/ml/train_models_gp3.py
+    deps:
+    - path: msml/ml/train_models_gp3.py
+      hash: md5
+      md5: 93f842868026868e436006f339f4433f
+      size: 38211

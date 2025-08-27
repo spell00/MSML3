@@ -25,7 +25,6 @@ class Infer:
     def __init__(self, name, model, data, uniques,
                  log_path, args, logger, log_neptune, mlops='None',
                  binary_path=None):
-        self.log_neptune = log_neptune
         self.best_roc_score = -1
         self.args = args
         self.log_path = log_path
@@ -123,7 +122,7 @@ class Infer:
         all_data, scaler = scale_data(scaler_name, all_data)
 
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             # Create a Neptune run object
             run = neptune.init_run(
                 project=NEPTUNE_PROJECT_NAME,
@@ -265,7 +264,7 @@ class Infer:
 
         self.save_result_df(lists, run)
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             log_neptune(run, lists, None)
             run.stop()
             model.stop()
@@ -333,7 +332,7 @@ class Infer:
 
         # all_data, scaler = scale_data(scaler_name, all_data)
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             # Create a Neptune run object
             run = neptune.init_run(
                 project=NEPTUNE_PROJECT_NAME,
@@ -529,7 +528,7 @@ class Infer:
 
         self.save_results_df(lists, run)
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             log_neptune(run, lists, None)
             run.stop()
             model.stop()

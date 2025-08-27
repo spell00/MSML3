@@ -54,7 +54,6 @@ class Train:
     def __init__(self, name, model, data, uniques, hparams_names, log_path, 
                  binary_path, args, logger, log_neptune, mlops='None'):
 
-        self.log_neptune = log_neptune
         self.binary_path = binary_path
         self.best_roc_score = -1
         self.args = args
@@ -122,7 +121,7 @@ class Train:
             else:
                 param_grid[name] = param
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             # Create a Neptune run object
             run = neptune.init_run(
                 project=NEPTUNE_PROJECT_NAME,
@@ -540,7 +539,7 @@ class Train:
             }
             self.save_best_model_hparams(param_grid, other_params, scaler_name, unique_batches, metrics)
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             log_neptune(run, lists)
             run.stop()
             model.stop()

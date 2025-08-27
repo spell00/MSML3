@@ -108,7 +108,7 @@ class Train2Models(Train):
             else:
                 param_grid[name] = param
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             # Create a Neptune run object
             run = neptune.init_run(
                 project=NEPTUNE_PROJECT_NAME,
@@ -196,7 +196,7 @@ class Train2Models(Train):
         all_data_binary['inputs']['test'] = all_data_binary['inputs']['test'].iloc[:, not_zeros_col]
         all_data_binary['inputs']['urinespositives'] = all_data_binary['inputs']['urinespositives'].iloc[:, not_zeros_col]
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             model['total_features'] = run['total_features'] = self.data['inputs']['all'].shape[1]
 
 
@@ -604,7 +604,7 @@ class Train2Models(Train):
                 'ami': None,
             }
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             log_neptune(run, lists, best_scores)
             run.stop()
             model.stop()

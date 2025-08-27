@@ -55,7 +55,6 @@ from dataset import get_data
 
 class Train:
     def __init__(self, name, model, data, uniques, hparams_names, log_path, args, logger, log_neptune, mlops='None'):
-        self.log_neptune = log_neptune
         self.best_roc_score = -1
         self.args = args
         self.log_path = log_path
@@ -138,7 +137,7 @@ class Train:
         all_data['inputs']['test'] = all_data['inputs']['test'].iloc[:, not_zeros_col]
         all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[:, not_zeros_col]
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             # Create a Neptune run object
             run = neptune.init_run(
                 project=NEPTUNE_PROJECT_NAME,
@@ -408,7 +407,7 @@ class Train:
             self.save_results_df(lists, run)
             self.retrieve_best_scores(lists)
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             log_neptune(run, lists)
             run.stop()
             model.stop()

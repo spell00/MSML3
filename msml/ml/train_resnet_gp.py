@@ -330,8 +330,7 @@ def binarize_labels(data, controls):
 
 class TrainAE:
 
-    def __init__(self, args, fix_thres=-1, load_tb=False, keep_models=True, log_inputs=True,
-                 log_tb=False, log_neptune=False, log_mlflow=True):
+    def __init__(self, args, fix_thres=-1, load_tb=False, keep_models=True, log_inputs=True):
         """
 
         Args:
@@ -354,9 +353,7 @@ class TrainAE:
         self.best_mcc = -1
         self.best_closs = np.inf
         self.logged_inputs = False
-        self.log_tb = log_tb
-        self.log_neptune = log_neptune
-        self.log_mlflow = log_mlflow
+        self.args.log_mlflow = log_mlflow
         self.args = args
         self.log_inputs = log_inputs
         self.keep_models = keep_models
@@ -472,7 +469,7 @@ class TrainAE:
         hparams_filepath = self.complete_log_path + '/hp'
         os.makedirs(hparams_filepath, exist_ok=True)
         self.args.model_name = 'ae_classifier_holdout'
-        if self.log_tb:
+        if self.args.log_tb:
             loggers['tb_logging'] = TensorboardLoggingAE(hparams_filepath, params,
                                                          tw=self.args.tied_weights,
                                                          dloss=self.args.dloss,
@@ -484,7 +481,7 @@ class TrainAE:
             model = None
             run = None
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             # Create a Neptune run object
             run = neptune.init_run(
                 project=NEPTUNE_PROJECT_NAME,
@@ -527,7 +524,7 @@ class TrainAE:
             model = None
             run = None
 
-        if self.log_mlflow:
+        if self.args.log_mlflow:
             mlflow.set_experiment(
                 self.args.exp_id,
             )
@@ -691,7 +688,7 @@ class TrainAE:
             
                     if torch.isnan(closs):
                         print('\n\n\nNAN LOSS\n\n\n')
-                        if self.log_mlflow:
+                        if self.args.log_mlflow:
                             mlflow.log_param('finished', 0)
                             mlflow.end_run()
                         return self.best_loss
@@ -707,14 +704,14 @@ class TrainAE:
 
                     traces = self.get_mccs(lists, traces)
                     values = log_traces(traces, values)
-                    if self.log_tb:
+                    if self.args.log_tb:
                         try:
                             add_to_logger(values, loggers['logger'], epoch)
                         except:
                             print("Problem with add_to_logger!")
-                    if self.log_neptune:
+                    if self.args.log_neptune:
                         add_to_neptune(values, run, epoch)
-                    if self.log_mlflow:
+                    if self.args.log_mlflow:
                         add_to_mlflow(values, epoch)
                     if np.mean(values['valid']['mcc'][-self.args.n_agg:]) > self.best_mcc and len(
                             values['valid']['mcc']) > self.args.n_agg:
@@ -778,7 +775,7 @@ class TrainAE:
                         closs, best_lists, traces = self.loop(group, None, ae, sceloss,
                                                               loaders[group], best_lists,
                                                               traces, nu=0, gamma=0)
-                if self.log_neptune:
+                if self.args.log_neptune:
                     model["model"].upload(f'{self.complete_log_path}/model_{h}_state.pth')
                     model["validation/closs"].log(self.best_closs)
                 best_closses += [self.best_closs]
@@ -819,7 +816,7 @@ class TrainAE:
         # otherwise the number of threads will keep increasing.
         # daemon = Thread(target=self.logging, daemon=True, name='Monitor', args=[run, cm_logger])
         # daemon.start()
-        if self.log_mlflow:
+        if self.args.log_mlflow:
             mlflow.log_param('finished', 1)
         self.logging(run, loggers['cm_logger'])
 
@@ -846,7 +843,7 @@ class TrainAE:
         self.log_predictions(best_lists, run, h)
 
         if self.args.log_metrics:
-            if self.log_tb:
+            if self.args.log_tb:
                 try:
                     # logger, lists, values, model, unique_labels, mlops, epoch, metrics, n_meta_emb=0, device='cuda'
                     metrics = log_metrics(loggers['logger'], best_lists, best_vals, ae,
@@ -856,7 +853,7 @@ class TrainAE:
                                           device=self.args.device)
                 except BrokenPipeError:
                     print("\n\n\nProblem with logging stuff!\n\n\n")
-            if self.log_neptune:
+            if self.args.log_neptune:
                 try:
                     metrics = log_metrics(run, best_lists, best_vals, ae,
                                           self.unique_labels, self.unique_batches,
@@ -865,7 +862,7 @@ class TrainAE:
                                           device=self.args.device)
                 except BrokenPipeError:
                     print("\n\n\nProblem with logging stuff!\n\n\n")
-            if self.log_mlflow:
+            if self.args.log_mlflow:
                 try:
                     metrics = log_metrics(None, best_lists, best_vals, ae,
                                           self.unique_labels,
@@ -877,21 +874,21 @@ class TrainAE:
 
         if self.args.log_metrics and self.pools:
             try:
-                if self.log_neptune:
+                if self.args.log_neptune:
                     enc_data = make_data(best_lists, 'encoded_values')
                     metrics = log_pool_metrics(enc_data['inputs'], enc_data['batches'], enc_data['labels'],
                                                self.unique_unique_labels, run, epoch, metrics, 'enc', 'neptune')
                     rec_data = make_data(best_lists, 'rec_values')
                     metrics = log_pool_metrics(rec_data['inputs'], rec_data['batches'], rec_data['labels'],
                                                self.unique_unique_labels, run, epoch, metrics, 'rec', 'neptune')
-                if self.log_mlflow:
+                if self.args.log_mlflow:
                     enc_data = make_data(best_lists, 'encoded_values')
                     metrics = log_pool_metrics(enc_data['inputs'], enc_data['batches'], enc_data['labels'],
                                                self.unique_unique_labels, run, epoch, metrics, 'enc', 'mlflow')
                     rec_data = make_data(best_lists, 'rec_values')
                     metrics = log_pool_metrics(rec_data['inputs'], rec_data['batches'], rec_data['labels'],
                                                self.unique_unique_labels, run, epoch, metrics, 'rec', 'mlflow')
-                if self.log_tb:
+                if self.args.log_tb:
                     enc_data = make_data(best_lists, 'encoded_values')
                     metrics = log_pool_metrics(enc_data['inputs'], enc_data['batches'], enc_data['labels'],
                                                self.unique_unique_labels, loggers['logger'], epoch, metrics, 'enc',
@@ -907,7 +904,7 @@ class TrainAE:
         loggers['cm_logger'].add(best_lists)
         if h == 1:
             if self.args.log_plots:
-                if self.log_tb:
+                if self.args.log_tb:
                     # TODO Add log_shap
                     loggers.add(loggers['logger_cm'], epoch, best_lists,
                                self.unique_labels, best_traces, 'tensorboard')
@@ -916,38 +913,38 @@ class TrainAE:
                         log_shap(loggers['logger_cm'], shap_ae, best_lists, self.columns, self.args.n_meta, 'mlflow',
                                 self.complete_log_path,
                                 self.args.device)
-                if self.log_neptune:
+                if self.args.log_neptune:
                     if log_shap is not None:
                         log_shap(run, shap_ae, best_lists, self.columns, self.args.embeddings_meta, 'neptune',
                                 self.complete_log_path,
                                 self.args.device)
                     log_plots(run, best_lists, 'neptune', epoch)
-                if self.log_mlflow:
+                if self.args.log_mlflow:
                     if log_shap is not None:
                         log_shap(None, shap_ae, best_lists, self.columns, self.args.embeddings_meta, 'mlflow',
                                 self.complete_log_path,
                                 self.args.device)
                     log_plots(None, best_lists, 'mlflow', epoch)
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             run["recs"].track_files(f'{self.complete_log_path}/recs.csv')
             run["encs"].track_files(f'{self.complete_log_path}/encs.csv')
-            # if self.log_mlflow:
+            # if self.args.log_mlflow:
             #     mlflow.log_artifact(f'{self.complete_log_path}/recs.csv')
             #     mlflow.log_artifact(f'{self.complete_log_path}/encs.csv')
             # try:
             #     enc_data = make_data(best_lists, 'encoded_values')
-            #     if self.log_tb and self.pools:
+            #     if self.args.log_tb and self.pools:
             #         metrics = log_pool_metrics(enc_data['inputs'], enc_data['batches'], enc_data['labels'], self.unique_labels, ['logger_cm'], epoch,
             #                                    metrics,
             #                                    'enc', 'tensorboard')
-            #     if self.log_neptune and self.pools:
+            #     if self.args.log_neptune and self.pools:
             #         metrics = log_pool_metrics(enc_data['inputs'], enc_data['batches'], enc_data['labels'], run, epoch, metrics, 'enc',
             #                                    'neptune')
             #         metrics = log_pool_metrics(enc_data['inputs'], enc_data['batches'], enc_data['labels'], model, epoch, metrics,
             #                                    'enc',
             #                                    'neptune')
-            #     if self.log_mlflow and self.pools:
+            #     if self.args.log_mlflow and self.pools:
             #         metrics = log_pool_metrics(enc_data['inputs'], enc_data['batches'], enc_data['labels'], run, epoch, metrics, 'enc',
             #                                    'mlflow')
             #         metrics = log_pool_metrics(enc_data['inputs'], enc_data['batches'], enc_data['labels'], model, epoch, metrics,
@@ -956,17 +953,17 @@ class TrainAE:
             #
             #     if self.pools:
             #         rec_data = make_data(best_lists, 'rec_values')
-            #         if self.log_tb:
+            #         if self.args.log_tb:
             #             metrics = log_pool_metrics(rec_data['inputs'], rec_data['batches'], rec_data['labels'], loggers['logger_cm'], epoch,
             #                                        metrics,
             #                                        'rec', 'tensorboard')
-            #         if self.log_neptune:
+            #         if self.args.log_neptune:
             #             metrics = log_pool_metrics(rec_data['inputs'], rec_data['batches'], rec_data['labels'], run, epoch, metrics, 'rec',
             #                                        'neptune')
             #             metrics = log_pool_metrics(rec_data['inputs'], rec_data['batches'], rec_data['labels'], model, epoch, metrics,
             #                                        'rec',
             #                                        'neptune')
-            #         if self.log_mlflow:
+            #         if self.args.log_mlflow:
             #             metrics = log_pool_metrics(rec_data['inputs'], rec_data['batches'], rec_data['labels'], run, epoch, metrics, 'rec',
             #                                        'mlflow')
             #             metrics = log_pool_metrics(rec_data['inputs'], rec_data['batches'], rec_data['labels'], model, epoch, metrics,
@@ -994,11 +991,11 @@ class TrainAE:
                 best_values['pool_metrics']['enc'] = metrics['pool_metrics_enc']
                 best_values['pool_metrics']['rec'] = metrics['pool_metrics_rec']
         # TODO change logging with tensorboard and neptune. The previous
-        if self.log_tb:
+        if self.args.log_tb:
             loggers['tb_logging'].logging(best_values, metrics)
-        if self.log_neptune:
+        if self.args.log_neptune:
             log_neptune(run, best_values)
-        if self.log_mlflow:
+        if self.args.log_mlflow:
             log_mlflow(best_values, h)
 
         # except BrokenPipeError:
@@ -1006,11 +1003,11 @@ class TrainAE:
 
     def logging(self, run, cm_logger):
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             cm_logger.plot(run, 0, self.unique_labels, 'neptune')
             # cm_logger.get_rf_results(run, self.args)
             run.stop()
-        if self.log_mlflow:
+        if self.args.log_mlflow:
             cm_logger.plot(None, 0, self.unique_labels, 'mlflow')
             # cm_logger.get_rf_results(run, self.args)
             mlflow.end_run()
@@ -1029,11 +1026,11 @@ class TrainAE:
                                          np.array([self.unique_labels[x] for x in preds[group]]).reshape(-1, 1),
                                          names[group].reshape(-1, 1)), 1)).to_csv(
                 f'{self.complete_log_path}/{group}_predictions.csv')
-            if self.log_neptune:
+            if self.args.log_neptune:
                 run[f"{group}_predictions"].track_files(f'{self.complete_log_path}/{group}_predictions.csv')
                 run[f'{group}_AUC'] = metrics.roc_auc_score(y_true=cats[group], y_score=scores[group],
                                                             multi_class='ovr')
-            if self.log_mlflow:
+            if self.args.log_mlflow:
                 try:
                     mlflow.log_metric(f'{group}_AUC',
                                     metrics.roc_auc_score(y_true=cats[group], y_score=scores[group], multi_class='ovr'),

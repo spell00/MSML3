@@ -9,7 +9,7 @@ import pandas as pd
 from bernn.dl.models.pytorch.utils.utils import LogConfusionMatrix
 from .utils import remove_zero_cols, scale_data, get_empty_lists, columns_stats_over0
 from .torch_utils import augment_data
-from .loggings import log_ord, log_fct, log_neptune
+from .loggings import log_ord, log_fct, log_neptune, log_dvclive
 from sklearn.metrics import matthews_corrcoef as MCC
 from sklearn.metrics import accuracy_score as ACC
 from .log_shap import log_shap
@@ -18,13 +18,18 @@ from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold
 from bernn.dl.models.pytorch.utils.dataset import get_loaders_bacteria2
 from bernn.dl.train.train_ae_classifier_holdout import log_num_neurons
 from bernn.dl.models.pytorch.utils.utils import get_optimizer, get_empty_dicts, get_empty_traces, \
-    log_traces, get_best_values, add_to_logger, add_to_neptune, add_to_mlflow
+    log_traces, get_best_values, add_to_logger, add_to_neptune, add_to_mlflow, add_to_dvclive
 import torch
 from .train import Train
 import random
 import torchvision.transforms as transforms
 from torchviz import make_dot
 import time
+try:
+    from dvclive import Live
+except Exception:
+    Live = None
+
 
 # from tensorboardX import SummaryWriter
 
@@ -745,7 +750,6 @@ class Train_bernn(TrainAE, Train):
                      variational=self.args.variational, conditional=False,
                      zinb=self.args.zinb, add_noise=self.args.add_noise,
                      tied_weights=self.args.tied_weights,
-                     use_gnn=0,  # TODO to remove
                      device=self.args.device,
                      prune_threshold=self.args.prune_threshold,
                      update_grid=self.args.update_grid,
@@ -765,7 +769,6 @@ class Train_bernn(TrainAE, Train):
                                dropout=params['dropout'],
                                variational=self.args.variational, conditional=False,
                                zinb=self.args.zinb, add_noise=0, tied_weights=self.args.tied_weights,
-                               use_gnn=0,  # TODO remove this
                                device=self.args.device).to(self.args.device)
         shap_ae.mapper.to(self.args.device)
         shap_ae.dec.to(self.args.device)
@@ -800,8 +803,10 @@ class Train_bernn(TrainAE, Train):
         if self.log_inputs and not self.logged_inputs:
             data['inputs']['all'].to_csv(
                 f'{self.complete_log_path}/{self.args.berm}_inputs.csv')
-            if self.log_neptune:
+            if self.args.log_neptune:
                 run["inputs.csv"].track_files(f'{self.complete_log_path}/{self.args.berm}_inputs.csv')
+            if self.args.log_dvclive:
+                run.log_artifact(f'{self.complete_log_path}/{self.args.berm}_inputs.csv')
             # log_input_ordination(loggers['logger'], data, self.scaler, epoch)
             # if self.pools:
             #     metrics = log_pool_metrics(data['inputs'], data['batches'], data['labels'], loggers, epoch,
@@ -916,15 +921,18 @@ class Train_bernn(TrainAE, Train):
             if self.args.scheduler == 'ReduceLROnPlateau':
                 lr_scheduler_c.step(values['valid']['closs'][-1])
             # Remove pool metrics
-            if self.log_tb:
+            if self.args.log_tb:
                 try:
                     add_to_logger(values, loggers['logger'], epoch)
                 except Exception as e:
                     print(f"Problem with add_to_logger: {e}")
-            if self.log_neptune:
+            if self.args.log_neptune:
                 add_to_neptune(values, run)
-            if self.log_mlflow:
+            if self.args.log_mlflow:
                 add_to_mlflow(values, epoch)
+            if self.args.log_dvclive:
+                add_to_dvclive(values, epoch, self.live)
+
             if np.mean(values['valid']['mcc'][-self.args.n_agg:]) > self.best_mcc and len(
                     values['valid']['mcc']) >= self.args.n_agg:
                 print(f"Best Classification Mcc Epoch {epoch}, "
@@ -975,8 +983,12 @@ class Train_bernn(TrainAE, Train):
             if self.args.prune_threshold > 0:
                 n_neurons = ae.prune_model_paperwise(False, False, weight_threshold=self.args.prune_threshold)
                 # If save neptune is True, save the model
-                if self.log_neptune:
+                if self.args.log_neptune:
                     log_num_neurons(run, n_neurons, init_n_neurons)
+                if self.args.log_dvclive:
+                    run.log_metric("num_neurons", n_neurons)
+                    run.log_metric("init_num_neurons", init_n_neurons)
+                    run.log_metric("neurons_remaining", n_neurons / init_n_neurons if init_n_neurons > 0 else 0)
 
         # Generate a model architecture visualization
         X = torch.tensor(data['inputs']['all'].values, device=self.args.device, dtype=torch.bfloat16)
@@ -1085,6 +1097,35 @@ class Train_bernn(TrainAE, Train):
             'manips': copy.deepcopy(self.data['manips'])
         }
 
+        # Exclude user-specified batches (substrings, case-insensitive)
+        exclude_patterns = set(getattr(self.args, 'exclude_batches', []) or [])
+        if exclude_patterns:
+            def _filter_split(split_name):
+                if split_name not in all_data['batches_labels']:
+                    return
+                batches_arr = np.array(all_data['batches_labels'][split_name])
+                mask = np.array([
+                    (str(b).lower() not in exclude_patterns and
+                     not any(pat in str(b).lower() for pat in exclude_patterns))
+                    for b in batches_arr
+                ])
+                if split_name in all_data['inputs']:
+                    try:
+                        all_data['inputs'][split_name] = all_data['inputs'][split_name].iloc[mask, :]
+                    except Exception:
+                        pass
+                for key in ['labels', 'batches_labels', 'batches', 'concs', 'names', 'manips', 'urines', 'cats']:
+                    if split_name in all_data.get(key, {}):
+                        try:
+                            all_data[key][split_name] = np.array(all_data[key][split_name])[mask]
+                        except Exception:
+                            try:
+                                all_data[key][split_name] = [all_data[key][split_name][i] for i, keep in enumerate(mask) if keep]
+                            except Exception:
+                                pass
+            for split in list(all_data['batches_labels'].keys()):
+                _filter_split(split)
+
         if self.args.binary:
             all_data['labels']['all'] = np.array([
                 'blanc' if label == 'blanc' else 'bact' for label in all_data['labels']['all']
@@ -1102,7 +1143,7 @@ class Train_bernn(TrainAE, Train):
             all_data['inputs']['all'] = all_data['inputs']['all'].iloc[:, not_zeros_col]
             all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[:, not_zeros_col]
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             # Create a Neptune run object
             run = neptune.init_run(
                 project=NEPTUNE_PROJECT_NAME,
@@ -1178,6 +1219,76 @@ class Train_bernn(TrainAE, Train):
             run['mode'] = self.args.mode
         else:
             run = None
+        if self.args.log_dvclive:
+            try:
+                self.live = Live('dvc_logs', save_dvc_exp=True, resume=False)
+                # log static params once (parity with Neptune)
+                params = {
+                    'early_warmup_stop': self.args.early_warmup_stop,
+                    'early_stop': self.args.early_stop,
+                    'fast_hparams_optim': self.args.fast_hparams_optim,
+                    'warmup_after_warmup': self.args.warmup_after_warmup,
+                    'train_after_warmup': self.args.train_after_warmup,
+                    'hparams': hparams,
+                    'csv_file': self.args.csv_file,
+                    'model_name': self.model_name,
+                    'groupkfold': self.args.groupkfold,
+                    'dataset_name': 'MSML-Bacteria',
+                    'scaler_name': scaler_name,
+                    'mz_min': self.args.min_mz,
+                    'mz_max': self.args.max_mz,
+                    'rt_min': self.args.min_rt,
+                    'rt_max': self.args.max_rt,
+                    'mz_bin': self.args.mz,
+                    'rt_bin': self.args.rt,
+                    'path': self.log_path,
+                    'concs': self.args.concs,
+                    'binary': self.args.binary,
+                    'spd': self.args.spd,
+                    'ovr': self.args.ovr,
+                    'train_on': self.args.train_on,
+                    'n_features': self.args.n_features,
+                    'total_features': all_data['inputs']['all'].shape[1],
+                    'ms_level': self.args.ms_level,
+                    'batches': '-'.join(self.uniques['batches']),
+                    'context': 'train',
+                    'remove_bad_samples': self.args.remove_bad_samples,
+                    'colsample_bytree': self.args.colsample_bytree,
+                    'sparse_matrix': self.args.sparse_matrix,
+                    'max_bin': self.args.max_bin,
+                    'device': self.args.device,
+                    'num_workers': self.args.num_workers,
+                    'bs': self.args.bs,
+                    'use_mapping': self.args.use_mapping,
+                    'max_warmup': self.args.max_warmup,
+                    'add_noise': self.args.add_noise,
+                    'normalize': self.args.normalize,
+                    'use_sigmoid': self.args.use_sigmoid,
+                    'n_epochs': self.args.n_epochs,
+                    'ae_layers_max_neurons': self.args.ae_layers_max_neurons,
+                    'threshold': self.args.threshold,
+                    'dloss': self.args.dloss,
+                    'variational': self.args.variational,
+                    'zinb': self.args.zinb,
+                    'use_dropout': hparams['use_dropout'],
+                    'dropout': hparams['dropout'],
+                    'n_layers': self.args.n_layers,
+                    'xgboost_features': self.args.xgboost_features,
+                    'clip_val': self.args.clip_val,
+                    'scheduler': self.args.scheduler,
+                    'use_bf16': use_bf16,
+                    'tied_weights': self.args.tied_weights,
+                    'use_mapping': self.args.use_mapping,
+                    'prune_threshold': self.args.prune_threshold,
+                    'use_l1': self.args.use_l1,
+                    'classif_loss': self.args.classif_loss,
+                    'recon_loss': self.args.rec_loss,
+                    'mode': self.args.mode,
+                }
+                self.live.log_params(params)
+            except Exception as e:
+                print('dvclive init failed', e)
+
 
         ord_path = f"{'/'.join(self.log_path.split('/')[:-1])}/ords/"
         os.makedirs(ord_path, exist_ok=True)
@@ -1358,14 +1469,10 @@ class Train_bernn(TrainAE, Train):
             self.data['cats']['valid'] = all_data2['cats']['valid']
             self.data['cats']['test'] = all_data2['cats']['test']
             self.data['meta'] = {}
-            # self.data['meta']['all'] = all_data2['meta']['all']
             self.data['meta']['urinespositives'] = all_data2['meta']['urinespositives']
             self.data['meta']['train'] = all_data2['meta']['train']
             self.data['meta']['valid'] = all_data2['meta']['valid']
             self.data['meta']['test'] = all_data2['meta']['test']
-            # self.data['sets']['train'] = all_data2['sets']['train']
-            # self.data['sets']['valid'] = all_data2['sets']['valid']
-            # self.data['sets']['test'] = all_data2['sets']['test']
             self.data['manips']['train'] = all_data2['manips']['train']
             self.data['manips']['valid'] = all_data2['manips']['valid']
             self.data['manips']['test'] = all_data2['manips']['test']
@@ -1375,9 +1482,6 @@ class Train_bernn(TrainAE, Train):
             self.data['concs']['train'] = all_data2['concs']['train']
             self.data['concs']['valid'] = all_data2['concs']['valid']
             self.data['concs']['test'] = all_data2['concs']['test']
-            # self.data['urines']['train'] = all_data2['urines']['train']
-            # self.data['urines']['valid'] = all_data2['urines']['valid']
-            # self.data['urines']['test'] = all_data2['urines']['test']
 
             m = self.train_bernn(all_data2, hparams, run)
 
@@ -1391,6 +1495,7 @@ class Train_bernn(TrainAE, Train):
             if self.log_plots and self.h == 0:
                 with torch.no_grad():
                     X = torch.tensor(all_data2['inputs']['all'].values, device=self.args.device, dtype=torch.bfloat16)
+                    # looks like there is blancs inside bpatients?
                     X2 = torch.tensor(all_data2['inputs']['urinespositives'].values, device=self.args.device, dtype=torch.bfloat16)
                     bottleneck = m.enc(X).cpu().float().numpy()
                     bottleneck2 = m.enc(X2).cpu().float().numpy()
@@ -1483,8 +1588,6 @@ class Train_bernn(TrainAE, Train):
                 except Exception as e:
                     print('Error at urinespositives calculation', e)
 
-            # ... rest of your fold code ...
-
             # Only log/save urinespositives results if test batch is b11
             if is_b11_test and all_data2['inputs']['urinespositives'].shape[0] > 0:
                 # Place any urinespositives-specific logging or saving here
@@ -1550,6 +1653,8 @@ class Train_bernn(TrainAE, Train):
                 np.concatenate(lists['proba']['posurines']).max(1)
             except Exception as e:
                 print('Error at concat of probas', e)
+            if self.args.log_dvclive:
+                self.live.next_step()
 
         try:
             np.concatenate(lists['proba']['posurines']).max(1)
@@ -1569,9 +1674,12 @@ class Train_bernn(TrainAE, Train):
         posurines_df = None  # TODO move somewhere more logical
 
         # Log in neptune the optimal iteration
-        if self.log_neptune:
+        if self.args.log_neptune:
             run["best_iteration"] = np.round(np.mean([x for x in best_iteration]))
             run["model_size"] = get_size_in_mb(self.ae)
+        if self.args.log_dvclive:
+            self.live.log_metric("best_iteration", np.round(np.mean([x for x in best_iteration])))
+            self.live.log_metric("model_size", get_size_in_mb(self.ae))
 
         try:
             np.concatenate(lists['proba']['posurines']).max(1)
@@ -1615,10 +1723,15 @@ class Train_bernn(TrainAE, Train):
                     'model_name': self.args.model_name,
                     'log_path': self.log_path,
                 }
-                run = log_shap(run, args_dict)
-                run['log_shap'] = 1
+                if self.args.log_neptune:
+                    run = log_shap(run, args_dict)
+                if self.args.log_dvclive:
+                    self.live.log_metric("log_shap", 1)
             else:
-                run['log_shap'] = 0
+                if self.args.log_neptune:
+                    run['log_shap'] = 0
+                if self.args.log_dvclive:
+                    self.live.log_metric("log_shap", 0)
 
             # save the features kept
             with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl', 'wb') as f:
@@ -1647,10 +1760,12 @@ class Train_bernn(TrainAE, Train):
                 f'{self.log_path}/saved_models/{self.args.model_name}_posurines_individual_results.csv'
             )
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             log_neptune(run, lists, best_scores)
             run.stop()
-            # model.stop()
+        if self.args.log_dvclive:
+            log_dvclive(self.live, lists, best_scores)
+            self.live.end()
 
         return np.mean(lists['mcc']['valid'])
 
@@ -1773,9 +1888,15 @@ def get_lr_scheduler(optimizer, lr, n_epochs, scheduler_type, loader, verbose, *
     if scheduler_type == 'ReduceLROnPlateau':
         patience = kwargs.get('patience', max(1, n_epochs // 50))
         factor = kwargs.get('factor', 0.5)
-        return torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, patience=patience, factor=factor, verbose=verbose
-        )
+        # Some torch builds (or custom backports) may not accept the 'verbose' kwarg.
+        try:
+            return torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, patience=patience, factor=factor, verbose=verbose
+            )
+        except TypeError:
+            return torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, patience=patience, factor=factor
+            )
     if scheduler_type == 'cosine':
         T_max = kwargs.get('T_max', n_epochs)
         eta_min = kwargs.get('eta_min', 0)

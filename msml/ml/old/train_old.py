@@ -36,7 +36,6 @@ class Train:
     def __init__(self, name, model, data, uniques, hparams_names,
                  log_path, args, logger, log_neptune, mlops='None',
                  binary_path=None):
-        self.log_neptune = log_neptune
         self.best_roc_score = -1
         self.args = args
         self.log_path = log_path
@@ -161,7 +160,7 @@ class Train:
             all_data['inputs']['test'] = all_data['inputs']['test'].iloc[:, not_zeros_col]
             all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[:, not_zeros_col]
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             # Create a Neptune run object
             run = neptune.init_run(
                 project=NEPTUNE_PROJECT_NAME,
@@ -539,7 +538,7 @@ class Train:
         posurines_df = None  # TODO move somewhere more logical
 
         # Log in neptune the optimal iteration
-        if self.log_neptune:
+        if self.args.log_neptune:
             model["best_iteration"] = run["best_iteration"] = np.round(np.mean([x for x in best_iteration]))
             model["model_size"] = run["model_size"] = get_size_in_mb(m)
 
@@ -610,7 +609,7 @@ class Train:
                 f'{self.log_path}/saved_models/{self.args.model_name}_posurines_individual_results.csv'
             )
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             log_neptune(run, lists, best_scores)
             run.stop()
             model.stop()
@@ -674,7 +673,7 @@ class Train:
         all_data['inputs']['all'] = all_data['inputs']['all'].iloc[:, not_zeros_col]
         all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[:, not_zeros_col]
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             # Create a Neptune run object
             run = neptune.init_run(
                 project=NEPTUNE_PROJECT_NAME,

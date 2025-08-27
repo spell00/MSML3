@@ -1,0 +1,53 @@
+model_name: binary0_xgboost
+groupkfold: 1
+dataset_name: MSML-Bacteria
+scaler_name: zscore
+mz_min: 0
+mz_max: 10000
+rt_min: 0
+rt_max: 320
+mz_bin: 10
+rt_bin: 10
+path: 
+  results/multi/mz10/rt10/ms2/200spd/thr0.0/logmax/all/BPatients-cultures_pures-b15-b14-b13-b12-b11-b10-b9-b8-b7-b6-b5-b4-b3-b2-b1_binary0_1000_gkf1_ovr0_mz0-10000rt0-320_na_h/xgboost/
+concs: na,h
+binary: 0
+spd: 200
+ovr: 0
+train_on: all
+n_features: 1000
+total_features: 1000
+ms_level: 2
+log1p: 0
+batches: 
+  bpatients-culturespures-b15-b14-b13-b12-b11-b10-b9-b8-b7-b6-b5-b4-b3-b2-b1
+context: train
+remove_bad_samples: 1
+colsample_bytree: 1.0
+sparse_matrix: 0
+max_bin: 256
+device: cuda:0
+num_workers: 0
+bs: 64
+use_mapping: 0
+max_warmup: 1000
+add_noise: 1
+normalize: 1
+use_sigmoid: 0
+n_epochs: 1000
+ae_layers_max_neurons:
+- 10000
+threshold: 0.0
+dloss: DANN
+variational: 0
+zinb: 0
+n_layers: 2
+xgboost_features: 0
+clip_val: 0.0
+scheduler: ReduceLROnPlateau
+tied_weights:
+prune_threshold: 0
+use_l1:
+classif_loss: ce
+recon_loss: l1
+mode: logmax

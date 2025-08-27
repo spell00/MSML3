@@ -1,4 +1,5 @@
 import os
+from turtle import mode
 import numpy as np
 import pandas as pd
 import copy
@@ -98,18 +99,18 @@ def log_ord(data, uniques, path, scaler_name, step_name, run=None):
     unique_concs = uniques['concs']
     unique_urinespositives = np.unique(data_tmp['urinespositives']['all'])
     log_ORD({'model': PCA(n_components=2), 'name': f'PCA_{scaler_name}'}, data_tmp,
-            {'batches': unique_batches, 'labels': unique_labels,
+            {'batches_labels': unique_batches, 'labels': unique_labels,
              'manips': unique_manips, 'urines': unique_urines, 'concs': unique_concs,
              'urinespositives': unique_urinespositives
              }, path, scaler_name, step_name, run)
     log_ORD({'model': UMAP(n_components=2), 'name': f'UMAP_{scaler_name}'}, data_tmp,
-            {'batches': unique_batches, 'labels': unique_labels,
+            {'batches_labels': unique_batches, 'labels': unique_labels,
              'manips': unique_manips, 'urines': unique_urines, 'concs': unique_concs,
              'urinespositives': unique_urinespositives
              }, path, scaler_name, step_name, run)
     if unique_labels is not None:
         try:
-            log_LDA(LDA, data_tmp, {'batches': unique_batches, 'labels': unique_labels}, path, scaler_name)
+            log_LDA(LDA, data_tmp, {'batches_labels': unique_batches, 'labels': unique_labels}, path, scaler_name)
         except Exception as e:
             print(e)
             print('\n\nLDA failed\n\n')
@@ -491,6 +492,11 @@ def get_metrics(data, metrics, form):
     new_data['urines']['all'] = new_data['urines']['all'][blancs_inds]
     new_data['manips']['all'] = new_data['manips']['all'][blancs_inds]
     new_data['batches']['all'] = new_data['batches']['all'][blancs_inds]
+    # maintain alignment for batches_labels if present
+    if 'batches_labels' in new_data and 'all' in new_data['batches_labels']:
+        new_data['batches_labels']['all'] = new_data['batches_labels']['all'][blancs_inds]
+    # choose which batch key to use for domain (batch) metrics
+    batch_domain_key = 'batches_labels' if 'batches_labels' in new_data else 'batches'
     new_data['inputs']['all'] = new_data['inputs']['all'].iloc[blancs_inds]
     knns = {repres: KNeighborsClassifier(n_neighbors=20) for repres in ['domains', 'labels']}
 
@@ -503,15 +509,15 @@ def get_metrics(data, metrics, form):
             metrics[form][group] = {}
         # keep only data where labels == blanc
         if group == 'all':
-            knns['domains'].fit(new_data['inputs'][group], new_data['batches'][group])
+            knns['domains'].fit(new_data['inputs'][group], new_data[batch_domain_key][group])
             knns['labels'].fit(new_data['inputs'][group], new_data['cats'][group])
         if 'pool' not in group or 'all_pool' == group:
             # for metric, funct in zip(['lisi', 'silhouette', 'kbet'], [rLISI, silhouette_score, rKBET]):
             for metric, funct in zip(['silhouette'], [silhouette_score]):
                 try:
                     metrics[form][group][metric] = {'labels': None, 'domains': None}
-                    metrics[form][group][metric]['domains'] =\
-                        funct(new_data['inputs'][group], new_data['batches'][group])
+                    metrics[form][group][metric]['domains'] = \
+                        funct(new_data['inputs'][group], new_data[batch_domain_key][group])
                     if 'pool' not in group:
                         metrics[form][group][metric]['labels'] =\
                             funct(new_data['inputs'][group], new_data['cats'][group])
@@ -531,9 +537,9 @@ def get_metrics(data, metrics, form):
                     ['adjusted_rand_score', 'adjusted_mutual_info_score'],
                     [adjusted_rand_score, adjusted_mutual_info_score]):
                 metrics[form][group][metric] = {'labels': None, 'domains': None}
-                metrics[form][group][metric]['domains'] = funct(new_data['batches'][group], domain_preds)
+                metrics[form][group][metric]['domains'] = funct(new_data[batch_domain_key][group], domain_preds)
                 if 'pool' not in group:
-                    metrics[form][group][metric]['labels'] = funct(new_data['batches'][group], labels_preds)
+                    metrics[form][group][metric]['labels'] = funct(new_data[batch_domain_key][group], labels_preds)
 
     return metrics
 
@@ -616,6 +622,35 @@ def log_neptune(run, traces, best_scores):
             print(e)
 
 
+# DVC logging function: logs metrics and artifacts to dvclive (DVC)
+def log_dvclive(live, traces=None, best_scores=None, artifacts=None):
+    """
+    Log metrics and artifacts to DVC/dvclive.
+    Args:
+        traces (dict): Dictionary of metrics to log (e.g., per-epoch or per-step metrics).
+        best_scores (dict): Dictionary of best scores/metrics to log.
+        artifacts (list): List of file paths to log as artifacts (plots, models, etc.).
+    """
+    if best_scores is not None:
+        for key, value in best_scores.items():
+            live.log_metric(key, value)
+    if artifacts is not None:
+        for path in artifacts:
+            live.log_artifact(path)
+    for i in range(len(traces['mcc']['train'])):
+        if traces is not None:
+            for key in ['acc', 'mcc']:
+                for g in ['train', 'valid', 'test']:
+                    if key in traces and g in traces[key]:
+                        if isinstance(traces[key][g], list):
+                            if len(traces[key][g]) == 0:
+                                continue
+                        elif isinstance(traces[key][g], (float, np.float64)) is False:
+                            continue
+                        live.log_metric(f'{key}_{g}', traces[key][g][i])
+        live.next_step()
+
+
 # Calculate tpr by bacterium
 def calculate_tpr_per_bact(df, bacteria_cols):
     true_positives = {}
@@ -625,15 +660,15 @@ def calculate_tpr_per_bact(df, bacteria_cols):
         positives = df[df['labels'] == df['preds']][df['labels'] == bacterium].shape[0]
         total_predictions = (df['labels'] == bacterium).sum()
         true_positives[bacterium] = positives / total_predictions
+    batch_col = 'batches_labels' if 'batches_labels' in df.columns else 'batches'
     for bacterium in bacteria_cols:
-        for batch in df['batches'].unique():
+        for batch in df[batch_col].unique():
             tmp = df.copy()
-            tmp = tmp[tmp['batches'] == batch]
+            tmp = tmp[tmp[batch_col] == batch]
             if bacterium in tmp['labels'].unique():
                 true_positivess[bacterium] += [
-                    tmp[tmp['labels'] == tmp['preds']][
-                        tmp['labels'] == bacterium
-                    ].shape[0] / tmp[tmp['labels'] == bacterium].shape[0]
+                    tmp[tmp['labels'] == tmp['preds']][tmp['labels'] == bacterium].shape[0]
+                    / tmp[tmp['labels'] == bacterium].shape[0]
                 ]
     for bacterium in bacteria_cols:
         for cv in df['cv'].unique():
@@ -652,17 +687,19 @@ def calculate_tpr_per_bact(df, bacteria_cols):
 
 # Calculate tpr by batch
 def calculate_tpr_per_batch(df, batches):
+    # Use unified batches_labels column if available
+    batch_col = 'batches_labels' if 'batches_labels' in df.columns else 'batches'
     true_positives = {}
     true_positivess = {b: [] for b in batches}
     true_positivess_cv = {b: [] for b in batches}
     for batch in batches:
-        corrects = df[df['labels'] == df['preds']][df['batches'] == batch].shape[0]
-        total = (df['batches'] == batch).sum()
+        corrects = df[df['labels'] == df['preds']][df[batch_col] == batch].shape[0]
+        total = (df[batch_col] == batch).sum()
         true_positives[batch] = corrects / total
     for batch in batches:
         # for bacterium in df['labels'].unique():
         tmp = df.copy()
-        tmp = tmp[tmp['batches'] == batch]
+        tmp = tmp[tmp[batch_col] == batch]
         # if bacterium in tmp['labels'].unique():
         true_positivess[batch] += [tmp[tmp['labels'] == tmp['preds']].shape[0] / tmp.shape[0]]
     for batch in batches:
@@ -686,15 +723,16 @@ def calculate_tnr_per_bact(df, bacteria_cols):
         positives = df[df['labels'] == df['preds']][df['labels'] == bacterium].shape[0]
         total_predictions = (df['labels'] == bacterium).sum()
         true_negatives[bacterium] = positives / total_predictions
+    batch_col = 'batches_labels' if 'batches_labels' in df.columns else 'batches'
     for bacterium in bacteria_cols:
-        for batch in df['batches'].unique():
+        for batch in df[batch_col].unique():
             tmp = df.copy()
-            tmp = tmp[tmp['batches'] == batch]
+            tmp = tmp[tmp[batch_col] == batch]
             if bacterium in tmp['labels'].unique():
                 true_negativess[bacterium] += [
-                    tmp[tmp['labels'] == tmp['preds']][
-                        tmp['labels'] == bacterium
-                    ].shape[0] / tmp[tmp['labels'] == bacterium].shape[0]]
+                    tmp[tmp['labels'] == tmp['preds']][tmp['labels'] == bacterium].shape[0]
+                    / tmp[tmp['labels'] == bacterium].shape[0]
+                ]
     for bacterium in bacteria_cols:
         for cv in df['cv'].unique():
             tmp = df.copy()
@@ -711,17 +749,18 @@ def calculate_tnr_per_bact(df, bacteria_cols):
 
 # Calculate tnr by batch
 def calculate_tnr_per_batch(df, batches):
+    batch_col = 'batches_labels' if 'batches_labels' in df.columns else 'batches'
     true_negatives = {}
     true_negativess = {b: [] for b in batches}
     true_negativess_cv = {b: [] for b in batches}
     for batch in batches:
-        corrects = df[df['labels'] == df['preds']][df['batches'] == batch].shape[0]
-        total = (df['batches'] == batch).sum()
+        corrects = df[df['labels'] == df['preds']][df[batch_col] == batch].shape[0]
+        total = (df[batch_col] == batch).sum()
         true_negatives[batch] = corrects / total
     for batch in batches:
         # for bacterium in df['labels'].unique():
         tmp = df.copy()
-        tmp = tmp[tmp['batches'] == batch]
+        tmp = tmp[tmp[batch_col] == batch]
         # if bacterium in tmp['labels'].unique():
         true_negativess[batch] += [tmp[tmp['labels'] == tmp['preds']].shape[0] / tmp.shape[0]]
     for batch in batches:
@@ -745,10 +784,11 @@ def calculate_acc_per_bact(df, bacteria_cols):
         tmp['labels'] = tmp['labels'].apply(lambda x: 1 if x == bacterium else 0)
         tmp['preds'] = tmp['preds'].apply(lambda x: 1 if x == bacterium else 0)
         acc[bacterium] = ACC(tmp['labels'], tmp['preds'])
+    batch_col = 'batches_labels' if 'batches_labels' in df.columns else 'batches'
     for bacterium in bacteria_cols:
-        for batch in df['batches'].unique():
+        for batch in df[batch_col].unique():
             tmp = df.copy()
-            tmp = tmp[tmp['batches'] == batch]
+            tmp = tmp[tmp[batch_col] == batch]
             if bacterium in tmp['labels'].unique():
                 tmp['labels'] = tmp['labels'].apply(lambda x: 1 if x == bacterium else 0)
                 tmp['preds'] = tmp['preds'].apply(lambda x: 1 if x == bacterium else 0)
@@ -766,16 +806,17 @@ def calculate_acc_per_bact(df, bacteria_cols):
 
 
 def calculate_acc_per_batch(df, batches):
+    batch_col = 'batches_labels' if 'batches_labels' in df.columns else 'batches'
     mcc = {}
     mccs = {b: [] for b in batches}
     mccs_cv = {b: [] for b in batches}
     for batch in batches:
-        tmp = df.copy().iloc[df[df['batches'] == batch].index]
+        tmp = df.copy().iloc[df[df[batch_col] == batch].index]
         mcc[batch] = ACC(tmp['labels'], tmp['preds'])
     for batch in batches:
         # for bacterium in df['labels'].unique():
         tmp = df.copy()
-        tmp = tmp[tmp['batches'] == batch]
+        tmp = tmp[tmp[batch_col] == batch]
         # if bacterium in tmp['labels'].unique():
         # tmp['labels'] = tmp['labels'].apply(lambda x: 1 if x == bacterium else 0)
         # tmp['preds'] = tmp['preds'].apply(lambda x: 1 if x == bacterium else 0)
@@ -807,10 +848,11 @@ def calculate_precision_per_bact(df, bacteria_cols):
         corrects = df[df['labels'] == df['preds']][df['labels'] == bacterium].shape[0]
         total = df[df['labels'] == bacterium].shape[0]
         precision[bacterium] = corrects / total
+    batch_col = 'batches_labels' if 'batches_labels' in df.columns else 'batches'
     for bacterium in bacteria_cols:
-        for batch in df['batches'].unique():
+        for batch in df[batch_col].unique():
             tmp = df.copy()
-            tmp = tmp[tmp['batches'] == batch]
+            tmp = tmp[tmp[batch_col] == batch]
             if bacterium in tmp['labels'].unique():
                 tmp['labels'] = tmp['labels'].apply(lambda x: 1 if x == bacterium else 0)
                 tmp['preds'] = tmp['preds'].apply(lambda x: 1 if x == bacterium else 0)
@@ -837,18 +879,19 @@ def calculate_precision_per_bact(df, bacteria_cols):
 
 
 def calculate_precision_per_batch(df, batches):
+    batch_col = 'batches_labels' if 'batches_labels' in df.columns else 'batches'
     precision = {}
     precisions = {b: [] for b in batches}
     precisions_cv = {b: [] for b in batches}
     for batch in batches:
-        tmp = df.copy().iloc[df[df['batches'] == batch].index]
+        tmp = df.copy().iloc[df[df[batch_col] == batch].index]
         corrects = tmp[tmp['labels'] == tmp['preds']].shape[0]
         total = tmp.shape[0]
         precision[batch] = corrects / total
     for batch in batches:
         # for bacterium in df['labels'].unique():
         tmp = df.copy()
-        tmp = tmp[tmp['batches'] == batch]
+        tmp = tmp[tmp[batch_col] == batch]
         # if bacterium in tmp['labels'].unique():
         # tmp['labels'] = tmp['labels'].apply(lambda x: 1 if x == bacterium else 0)
         # tmp['preds'] = tmp['preds'].apply(lambda x: 1 if x == bacterium else 0)
@@ -879,10 +922,11 @@ def calculate_mcc_per_bact_old(df, bacteria_cols):
         tmp['labels'] = tmp['labels'].apply(lambda x: 1 if x == bacterium else 0)
         tmp['preds'] = tmp['preds'].apply(lambda x: 1 if x == bacterium else 0)
         mcc[bacterium] = MCC(tmp['labels'], tmp['preds'])
+    batch_col = 'batches_labels' if 'batches_labels' in df.columns else 'batches'
     for bacterium in bacteria_cols:
-        for batch in df['batches'].unique():
+        for batch in df[batch_col].unique():
             tmp = df.copy()
-            tmp = tmp[tmp['batches'] == batch]
+            tmp = tmp[tmp[batch_col] == batch]
             if bacterium in tmp['labels'].unique():
                 tmp['labels'] = tmp['labels'].apply(lambda x: 1 if x == bacterium else 0)
                 tmp['preds'] = tmp['preds'].apply(lambda x: 1 if x == bacterium else 0)
@@ -907,10 +951,11 @@ def calculate_mcc_per_bact(df, bacteria_cols):
         tmp['labels'] = tmp['labels'].apply(lambda x: 1 if x == bacterium else 0)
         tmp['preds'] = tmp['preds'].apply(lambda x: 1 if x == bacterium else 0)
         mcc[bacterium] = MCC(tmp['labels'], tmp['preds'])
+    batch_col = 'batches_labels' if 'batches_labels' in df.columns else 'batches'
     for bacterium in bacteria_cols:
-        for batch in df['batches'].unique():
+        for batch in df[batch_col].unique():
             tmp = df.copy()
-            tmp = tmp[tmp['batches'] == batch]
+            tmp = tmp[tmp[batch_col] == batch]
             if bacterium in tmp['labels'].unique():
                 tmp['labels'] = tmp['labels'].apply(lambda x: 1 if x == bacterium else 0)
                 tmp['preds'] = tmp['preds'].apply(lambda x: 1 if x == bacterium else 0)
@@ -927,16 +972,17 @@ def calculate_mcc_per_bact(df, bacteria_cols):
 
 
 def calculate_mcc_per_batch(df, batches):
+    batch_col = 'batches_labels' if 'batches_labels' in df.columns else 'batches'
     mcc = {}
     mccs = {b: [] for b in batches}
     mccs_cv = {b: [] for b in batches}
     for batch in batches:
-        tmp = df.copy().iloc[df[df['batches'] == batch].index]
+        tmp = df.copy().iloc[df[df[batch_col] == batch].index]
         mcc[batch] = MCC(tmp['labels'], tmp['preds'])
     for batch in batches:
         # for bacterium in df['labels'].unique():
         tmp = df.copy()
-        tmp = tmp[tmp['batches'] == batch]
+        tmp = tmp[tmp[batch_col] == batch]
         # if bacterium in tmp['labels'].unique():
         # tmp['labels'] = tmp['labels']#.apply(lambda x: 1 if x == bacterium else 0)
         # tmp['preds'] = tmp['preds']#.apply(lambda x: 1 if x == bacterium else 0)
@@ -952,7 +998,7 @@ def calculate_mcc_per_batch(df, batches):
     return mcc, mccs, mccs_cv
 
 
-def make_graph(metrics, metric, category, cols, title, path, run):
+def make_graph(metrics, metric, category, cols, title, path, run, mlops='neptune'):
     # Prepare data for plotting
     metric_df = pd.DataFrame({
         category: cols,
@@ -992,8 +1038,10 @@ def make_graph(metrics, metric, category, cols, title, path, run):
     plt.tight_layout()
     plt.savefig(f'{path}.png')
     plt.close()
-    run[f'{category}/{metric}'].upload(f'{path}.png')
-
+    if mlops == 'neptune':
+        run[f'{category}/{metric}'].upload(f'{path}.png')
+    elif mlops == 'dvclive':
+        run.log_artifact(f'{path}.png')
     # Plot metric by bacterium
     plt.figure(figsize=(14, 8))
     sns.barplot(x=category, y=metric, hue='Group', data=metric_melted_df)
@@ -1022,10 +1070,13 @@ def make_graph(metrics, metric, category, cols, title, path, run):
     plt.tight_layout()
     plt.savefig(f'{path}_cv.png')
     plt.close()
-    run[f'{category}/{metric}_cv'].upload(f'{path}_cv.png')
+    if mlops == 'neptune':
+        run[f'{category}/{metric}_cv'].upload(f'{path}_cv.png')
+    elif mlops == 'dvclive':
+        run.log_artifact(f'{path}_cv.png')
 
 
-def make_total_graph_total_batch(valid_metrics, test_metrics, metric, title, path, run):
+def make_total_graph_total_batch(valid_metrics, test_metrics, metric, title, path, run, mlops='neptune'):
     # Prepare data for plotting
     metric_df = pd.DataFrame({
         'Batch': valid_metrics.keys(),
@@ -1049,10 +1100,13 @@ def make_total_graph_total_batch(valid_metrics, test_metrics, metric, title, pat
     plt.tight_layout()
     plt.savefig(path)
     plt.close()
-    run[f'Batches/{metric}'].upload(path)
+    if mlops == 'dvclive':
+        run.log_artifact(path)
+    elif mlops == 'neptune':
+        run[f'Batches/{metric}'].upload(path)
 
 
-def make_total_graph_total_bact(valid_metrics, test_metrics, metric, title, path, run, bacteria_cols):
+def make_total_graph_total_bact(valid_metrics, test_metrics, metric, title, path, run, bacteria_cols, mlops='neptune'):
     # Prepare data for plotting
     metric_df = pd.DataFrame({
         'Pathogens': bacteria_cols,
@@ -1075,13 +1129,16 @@ def make_total_graph_total_bact(valid_metrics, test_metrics, metric, title, path
     plt.tight_layout()
     plt.savefig(path)
     plt.close()
-    run[f'Pathogens/{metric}'].upload(path)
+    if mlops == 'dvclive':
+        run.log_artifact(path)
+    elif mlops == 'neptune':
+        run[f'Pathogens/{metric}'].upload(path)
 
 
-def plot_bars(args, run, bacteria_cols):
+def plot_bars(args, run, bacteria_cols, mlops='neptune'):
     # Load the datasets
     path = f'results/multi/mz{args.mz}/rt{args.rt}/ms{args.ms_level}/' \
-            f'{args.spd}spd/thr{args.threshold}/{args.train_on}/{args.exp_name}/' \
+            f'{args.spd}spd/thr{args.threshold}/{args.mode}/{args.train_on}/{args.exp_name}/' \
             f'{args.model_name}/saved_models/'
     valid_df = pd.read_csv(f'{path}/{args.model_name}_valid_individual_results.csv', index_col=0)
     test_df = pd.read_csv(f'{path}/{args.model_name}_test_individual_results.csv', index_col=0)
@@ -1095,9 +1152,9 @@ def plot_bars(args, run, bacteria_cols):
             test_metrics_bact, test_metrics_bacts, test_metrics_bacts_cv =\
                 calculate_tpr_per_bact(test_df, bacteria_cols)
             valid_metrics_batch, valid_metrics_batchs, valid_metrics_batch_cv =\
-                calculate_tpr_per_batch(valid_df, valid_df['batches'].unique())
+                calculate_tpr_per_batch(valid_df, valid_df.get('batches_labels', valid_df['batches']).unique())
             test_metrics_batch, test_metrics_batchs, test_metrics_batch_cv =\
-                calculate_tpr_per_batch(test_df, test_df['batches'].unique())
+                calculate_tpr_per_batch(test_df, test_df.get('batches_labels', test_df['batches']).unique())
         if metric == 'TNR':
             total_valid = valid_df[valid_df['labels'] == valid_df['preds']].shape[0] / valid_df.shape[0]
             total_test = test_df[test_df['labels'] == test_df['preds']].shape[0] / test_df.shape[0]
@@ -1106,9 +1163,9 @@ def plot_bars(args, run, bacteria_cols):
             test_metrics_bact, test_metrics_bacts, test_metrics_bacts_cv =\
                 calculate_tnr_per_bact(test_df, bacteria_cols)
             valid_metrics_batch, valid_metrics_batchs, valid_metrics_batch_cv =\
-                calculate_tnr_per_batch(valid_df, valid_df['batches'].unique())
+                calculate_tnr_per_batch(valid_df, valid_df.get('batches_labels', valid_df['batches']).unique())
             test_metrics_batch, test_metrics_batchs, test_metrics_batch_cv =\
-                calculate_tnr_per_batch(test_df, test_df['batches'].unique())
+                calculate_tnr_per_batch(test_df, test_df.get('batches_labels', test_df['batches']).unique())
         elif metric == 'accuracy':
             total_valid = ACC(valid_df['labels'], valid_df['preds'])
             total_test = ACC(test_df['labels'], test_df['preds'])
@@ -1117,9 +1174,9 @@ def plot_bars(args, run, bacteria_cols):
             test_metrics_bact, test_metrics_bacts, test_metrics_bacts_cv =\
                 calculate_acc_per_bact(test_df, bacteria_cols)
             valid_metrics_batch, valid_metrics_batchs, valid_metrics_batch_cv =\
-                calculate_acc_per_batch(valid_df, valid_df['batches'].unique())
+                calculate_acc_per_batch(valid_df, valid_df.get('batches_labels', valid_df['batches']).unique())
             test_metrics_batch, test_metrics_batchs, test_metrics_batch_cv =\
-                calculate_acc_per_batch(test_df, test_df['batches'].unique())
+                calculate_acc_per_batch(test_df, test_df.get('batches_labels', test_df['batches']).unique())
         elif metric == 'precision':
             total_valid = valid_df[valid_df['labels'] == valid_df['preds']].shape[0] / valid_df.shape[0]
             total_test = test_df[test_df['labels'] == test_df['preds']].shape[0] / test_df.shape[0]
@@ -1128,9 +1185,9 @@ def plot_bars(args, run, bacteria_cols):
             test_metrics_bact, test_metrics_bacts, test_metrics_bacts_cv =\
                 calculate_precision_per_bact(test_df, bacteria_cols)
             valid_metrics_batch, valid_metrics_batchs, valid_metrics_batch_cv =\
-                calculate_precision_per_batch(valid_df, valid_df['batches'].unique())
+                calculate_precision_per_batch(valid_df, valid_df.get('batches_labels', valid_df['batches']).unique())
             test_metrics_batch, test_metrics_batchs, test_metrics_batch_cv =\
-                calculate_precision_per_batch(test_df, test_df['batches'].unique())
+                calculate_precision_per_batch(test_df, test_df.get('batches_labels', test_df['batches']).unique())
         elif metric == 'MCC':
             total_valid = MCC(valid_df['labels'], valid_df['preds'])
             total_test = MCC(test_df['labels'], test_df['preds'])
@@ -1139,9 +1196,9 @@ def plot_bars(args, run, bacteria_cols):
             test_metrics_bact, test_metrics_bacts, test_metrics_bacts_cv =\
                 calculate_mcc_per_bact(test_df, bacteria_cols)
             valid_metrics_batch, valid_metrics_batchs, valid_metrics_batch_cv =\
-                calculate_mcc_per_batch(valid_df, valid_df['batches'].unique())
+                calculate_mcc_per_batch(valid_df, valid_df.get('batches_labels', valid_df['batches']).unique())
             test_metrics_batch, test_metrics_batchs, test_metrics_batch_cv =\
-                calculate_mcc_per_batch(test_df, test_df['batches'].unique())
+                calculate_mcc_per_batch(test_df, test_df.get('batches_labels', test_df['batches']).unique())
 
         metrics_bact = {
             'valid': valid_metrics_bact,
@@ -1173,16 +1230,16 @@ def plot_bars(args, run, bacteria_cols):
         try:
             make_graph(metrics_bact, metric, 'Bacterium', bacteria_cols,
                    f'{metric} by Bacterium. Total valid: {total_valid:.2f}, test: {total_test:.2f}',
-                   f'{path}/{args.exp_name}_{metric}_by_bact', run
+                   f'{path}/{args.exp_name}_{metric}_by_bact', run, mlops
                    )
         except Exception as e:
             print(e)
             print('Error in make_graph for bacterium')
             pass
         try:
-            make_graph(metrics_batch, metric, 'Batch', valid_df['batches'].unique(),
+            make_graph(metrics_batch, metric, 'Batch', valid_df['batches_labels'].unique(),
                        f'{metric} by Batch. Total valid: {total_valid:.2f}, test: {total_test:.2f}',
-                       f'{path}/{args.exp_name}_{metric}_by_batch', run
+                       f'{path}/{args.exp_name}_{metric}_by_batch', run, mlops
                        )
         except Exception as e:
             print(e)
@@ -1191,7 +1248,7 @@ def plot_bars(args, run, bacteria_cols):
         try:
             make_total_graph_total_batch(valid_metrics_batch, test_metrics_batch, metric,
                                          f'{metric} by Batch. Total valid: {total_valid:.2f}, test: {total_test:.2f}',
-                                         f'{path}/{args.exp_name}_{metric}_by_batch_total.png', run
+                                         f'{path}/{args.exp_name}_{metric}_by_batch_total.png', run, mlops
                                          )
         except Exception as e:
             print(e)
@@ -1200,7 +1257,7 @@ def plot_bars(args, run, bacteria_cols):
             make_total_graph_total_bact(valid_metrics_bact, test_metrics_bact, metric,
                                         f'{metric} by Bacterium. Total valid: {total_valid:.2f},'
                                         f'test: {total_test:.2f}',
-                                        f'{path}/{args.exp_name}_{metric}_by_bact_total.png', run, bacteria_cols
+                                        f'{path}/{args.exp_name}_{metric}_by_bact_total.png', run, bacteria_cols, mlops
                                         )
         except Exception as e:
             print(e)

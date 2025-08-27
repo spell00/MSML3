@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from .utils import remove_zero_cols, scale_data, get_empty_lists
 from .torch_utils import augment_data
-from .loggings import log_ord, log_fct, log_neptune
+from .loggings import log_ord, log_fct, log_neptune, log_dvclive
 from sklearn.metrics import matthews_corrcoef as MCC
 from sklearn.metrics import accuracy_score as ACC
 # from scipy import stats
@@ -15,6 +15,10 @@ import xgboost
 # import pipeline from sklearn
 from .utils import columns_stats_over0
 from .train import Train
+try:
+    from dvclive import Live
+except Exception:
+    Live = None
 
 import sys
 
@@ -231,11 +235,10 @@ def add_results_to_list(m, upos, all_data, lists, dmatrices, data_dict, unique_l
 
 class Train_xgboost(Train):
     def __init__(self, name, model, data, uniques,
-                 log_path, args, logger, log_neptune, mlops='None',
-                 log_metrics=None, binary_path=None):
+                 log_path, args, logger,
+                 binary_path=None):
         super(Train_xgboost, self).__init__(name, model, data, uniques,
-                                            log_path, args, logger, log_neptune, mlops,
-                                            log_metrics, binary_path)
+                                            log_path, args, logger, binary_path)
         # self.hparams_names = None
         self.logger = logger
         self.best_scores = {
@@ -264,7 +267,6 @@ class Train_xgboost(Train):
         self.iter = 0
         self.model = model
         self.name = name
-        self.mlops = mlops
         self.uniques = uniques
         self.uniques2 = copy.deepcopy(self.uniques)
         self.uniques2['labels'] = None
@@ -367,6 +369,35 @@ class Train_xgboost(Train):
             'urines': copy.deepcopy(self.data['urines']),
             'cats': copy.deepcopy(self.data['cats']),
         }
+        # Exclude user-specified batches (substrings, case-insensitive) using batches_labels for matching
+        exclude_patterns = set(getattr(self.args, 'exclude_batches', []) or [])
+        if exclude_patterns:
+            def _filter_split(split_name):
+                if split_name not in all_data['batches_labels']:
+                    return
+                batches_arr = np.array(all_data['batches_labels'][split_name])
+                mask = np.array([
+                    (str(b).lower() not in exclude_patterns and
+                     not any(pat in str(b).lower() for pat in exclude_patterns))
+                    for b in batches_arr
+                ])
+                # Apply mask to all aligned structures present for the split
+                if split_name in all_data['inputs']:
+                    try:
+                        all_data['inputs'][split_name] = all_data['inputs'][split_name].iloc[mask, :]
+                    except Exception:
+                        pass
+                for key in ['labels', 'batches_labels', 'batches', 'concs', 'names', 'manips', 'urines', 'cats']:
+                    if split_name in all_data.get(key, {}):
+                        try:
+                            all_data[key][split_name] = np.array(all_data[key][split_name])[mask]
+                        except Exception:
+                            try:
+                                all_data[key][split_name] = [all_data[key][split_name][i] for i, keep in enumerate(mask) if keep]
+                            except Exception:
+                                pass
+            for split in list(all_data['batches_labels'].keys()):
+                _filter_split(split)
 
         if self.args.binary:
             all_data['labels']['all'] = np.array(
@@ -395,7 +426,7 @@ class Train_xgboost(Train):
         # if self.args.log_plots:
         #     log_ord(all_data, self.uniques, ord_path, scaler_name, 'inputs', run)
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             # Create a Neptune run object
             run = neptune.init_run(
                 project=NEPTUNE_PROJECT_NAME,
@@ -447,6 +478,61 @@ class Train_xgboost(Train):
         else:
             model = None
             run = None
+        if self.args.log_dvclive:
+            self.live = Live('dvc_logs', save_dvc_exp=True, resume=False)
+            params = {
+                "model_name": self.model_name,
+                "groupkfold": self.args.groupkfold,
+                "dataset_name": 'MSML-Bacteria',
+                "scaler_name": scaler_name,
+                "mz_min": self.args.min_mz,
+                "mz_max": self.args.max_mz,
+                "rt_min": self.args.min_rt,
+                "rt_max": self.args.max_rt,
+                "mz_bin": self.args.mz,
+                "rt_bin": self.args.rt,
+                "path": self.log_path,
+                "concs": self.args.concs,
+                "binary": self.args.binary,
+                "spd": self.args.spd,
+                "ovr": self.args.ovr,
+                "train_on": self.args.train_on,
+                "n_features": self.args.n_features,
+                "total_features": all_data['inputs']['all'].shape[1],
+                "ms_level": getattr(self.args, 'ms_level', None),
+                "log1p": getattr(self.args, 'log1p', None),
+                "batches": '-'.join(self.uniques['batches']) if 'batches' in self.uniques else None,
+                "context": 'train',
+                "remove_bad_samples": getattr(self.args, 'remove_bad_samples', None),
+                "colsample_bytree": getattr(self.args, 'colsample_bytree', None),
+                "sparse_matrix": getattr(self.args, 'sparse_matrix', None),
+                "max_bin": getattr(self.args, 'max_bin', None),
+                "device": getattr(self.args, 'device', None),
+                "num_workers": getattr(self.args, 'num_workers', None),
+                "bs": getattr(self.args, 'bs', None),
+                "use_mapping": getattr(self.args, 'use_mapping', None),
+                "max_warmup": getattr(self.args, 'max_warmup', None),
+                "add_noise": getattr(self.args, 'add_noise', None),
+                "normalize": getattr(self.args, 'normalize', None),
+                "use_sigmoid": getattr(self.args, 'use_sigmoid', None),
+                "n_epochs": getattr(self.args, 'n_epochs', None),
+                "ae_layers_max_neurons": getattr(self.args, 'ae_layers_max_neurons', None),
+                "threshold": getattr(self.args, 'threshold', None),
+                "dloss": getattr(self.args, 'dloss', None),
+                "variational": getattr(self.args, 'variational', None),
+                "zinb": getattr(self.args, 'zinb', None),
+                "n_layers": getattr(self.args, 'n_layers', None),
+                "xgboost_features": getattr(self.args, 'xgboost_features', None),
+                "clip_val": getattr(self.args, 'clip_val', None),
+                "scheduler": getattr(self.args, 'scheduler', None),
+                "tied_weights": getattr(self.args, 'tied_weights', None),
+                "prune_threshold": getattr(self.args, 'prune_threshold', None),
+                "use_l1": getattr(self.args, 'use_l1', None),
+                "classif_loss": getattr(self.args, 'classif_loss', None),
+                "recon_loss": getattr(self.args, 'rec_loss', None),
+                "mode": getattr(self.args, 'mode', None),
+            }
+            self.live.log_params(params)
 
         all_data, scaler = scale_data(scaler_name, all_data)
 
@@ -524,9 +610,21 @@ class Train_xgboost(Train):
             log_ord(self.data, self.uniques, ord_path, scaler_name, 'inputs', run)
         data = copy.deepcopy(self.data)
         metrics = log_fct(data, scaler_name, metrics)
-        if self.args.log_plots:
-            log_ord(data, self.uniques2, ord_path, f'{scaler_name}_blancs', 'inputs', run)
 
+        # Remove all samples not blancs in data urinespositives. If empty remove
+        inds = data['labels']['urinespositives'] == 'blanc'
+        if len(data['inputs']['urinespositives']) > 0:
+            for key in data.keys():
+                data[key]['urinespositives'] = data[key]['urinespositives'][inds]
+
+        # Make sure there is no blancs in batches
+        assert len(np.unique(data['labels']['all'])) == 1
+        # Find batches with blanc
+        blanc_batches = np.unique(data['batches_labels']['all'][data['labels']['all'] == 'blanc'])
+        # Find batches with blanc
+        if self.args.log_plots:
+            log_ord(data, self.uniques2, ord_path, f'{scaler_name}', 'inputs_blancs', run)
+        del data
         try:
             np.concatenate(lists['proba']['posurines']).max(1)
         except Exception as e:
@@ -545,9 +643,12 @@ class Train_xgboost(Train):
               )
 
         # Log in neptune the optimal iteration
-        if self.log_neptune:
+        if self.args.log_neptune:
             model["best_iteration"] = run["best_iteration"] = np.round(np.mean([x for x in best_iteration]))
             model["model_size"] = run["model_size"] = get_size_in_mb(m)
+        if self.args.log_dvclive:
+            self.live.log_metric("best_iteration", np.round(np.mean([x for x in best_iteration])))
+            self.live.log_metric("model_size", get_size_in_mb(m))
 
         try:
             np.concatenate(lists['proba']['posurines']).max(1)
@@ -557,28 +658,44 @@ class Train_xgboost(Train):
         lists, posurines_df = self.save_confusion_matrices(lists, run)
         self.save_calibration_curves(lists, run)
         self.save_roc_curves(lists, run)
+
+        n_batches = len(self.uniques['batches'])
         if np.mean(lists['mcc']['valid']) > np.mean(self.best_scores['mcc']['valid']):
             try:
                 self.log_xgboost_features_ord(m, all_data, scaler_name, run)
             except:
                 pass
-            self.log_shap(m, lists, data_dict, run)
+            if self.args.log_neptune:
+                self.log_shap(m, lists, data_dict, run, mlops='neptune')
+            if self.args.log_dvclive:
+                self.log_shap(m, lists, data_dict, run, mlops='dvclive')
+
             # save the features kept
             with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl', 'wb') as f:
                 pickle.dump(data_dict['data']['test'].columns, f)
 
-            self.keep_models(scaler_name)
             # Save the individual scores of each sample with class, #batch
-            self.save_results_df(lists, run)
             self.retrieve_best_scores(lists)
-            best_scores = self.save_best_model_hparams(param_grid, other_params, scaler_name,
-                                                       lists['unique_batches'], metrics)
+            if self.keep_models(scaler_name):
+                self.save_results_df(lists, run)
+                best_scores = self.save_best_model_hparams(param_grid, other_params, scaler_name,
+                                                        lists['unique_batches'], metrics)
+            else:
+                best_scores = {
+                    'ari': metrics[scaler_name]['all']['adjusted_rand_score']['domains'],
+                    'ami': metrics[scaler_name]['all']['adjusted_mutual_info_score']['domains'],
+                    'nbe': (
+                np.log(n_batches) - metrics[scaler_name]['all']['shannon']['domains']
+                ) / np.log(n_batches)
+                }
         else:
             best_scores = {
-                'nbe': None,
-                'ari': None,
-                'ami': None,
-            }
+                    'ari': metrics[scaler_name]['all']['adjusted_rand_score']['domains'],
+                    'ami': metrics[scaler_name]['all']['adjusted_mutual_info_score']['domains'],
+                    'nbe': (
+                np.log(n_batches) - metrics[scaler_name]['all']['shannon']['domains']
+            ) / np.log(n_batches)
+                }
             self.remove_models(scaler_name)
 
         if all_data['inputs']['urinespositives'].shape[0] > 0 and posurines_df is not None:
@@ -588,10 +705,13 @@ class Train_xgboost(Train):
                 f'{self.log_path}/saved_models/{self.args.model_name}_posurines_individual_results.csv'
             )
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             log_neptune(run, lists, best_scores)
             run.stop()
             model.stop()
+        if self.args.log_dvclive:
+            log_dvclive(self.live, lists, best_scores, artifacts=None)
+            self.live.end()
 
         return 1 - np.mean(lists['mcc']['valid'])
 
@@ -624,6 +744,7 @@ class Train_xgboost(Train):
 
             # Log ord with filtered features
             log_ord(filtered_data_dict, self.uniques, ord_path, scaler_name, 'filtered', run)
+            # TODO: Not sure only blancs are kept here
             log_ord(filtered_data_dict, self.uniques2, ord_path, scaler_name, 'filtered_blancs', run)
 
             # Get SHAP values for feature selection

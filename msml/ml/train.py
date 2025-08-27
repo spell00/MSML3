@@ -1,17 +1,28 @@
 import copy
 import json
 import os
+from contextlib import suppress
+try:
+    from dvclive import Live
+except Exception:
+    Live = None
+from contextlib import suppress
 import neptune
 from sklearn.calibration import calibration_curve
 import pickle
 import numpy as np
 import pandas as pd
+import datetime
 from .utils import remove_zero_cols, scale_data, get_empty_lists
 from .torch_utils import augment_data
 from .loggings import log_ord, log_fct, save_confusion_matrix, log_neptune, plot_bars
 from .sklearn_train_nocv import get_confusion_matrix, plot_roc
 from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold
 # from sklearn.multiclass import OneVsRestClassifier
+try:
+    from sklearn.multiclass import OneVsRestClassifier
+except Exception:
+    OneVsRestClassifier = None
 # import mattews correlation from sklearn
 from sklearn.metrics import matthews_corrcoef as MCC
 from sklearn.metrics import accuracy_score as ACC
@@ -27,6 +38,35 @@ import sys
 NEPTUNE_API_TOKEN = os.environ.get('NEPTUNE_API_TOKEN')
 NEPTUNE_PROJECT_NAME = "MSML-Bacteria"
 NEPTUNE_MODEL_NAME = 'MSMLBAC-'
+
+# DVC integration helpers
+def _run_cmd_silent(cmd: str):
+    try:
+        return os.popen(cmd + ' 2>/dev/null').read().strip()
+    except Exception:
+        return ''
+
+def dvc_available():
+    return bool(_run_cmd_silent('command -v dvc'))
+
+def dvc_add(path: str):
+    if not dvc_available() or not os.path.exists(path):
+        return False
+    # Only add if metafile missing or mtime changed (cheap heuristic)
+    meta = path + '.dvc'
+    if os.path.isdir(path) and not os.path.exists(meta):
+        os.system(f'dvc add "{path}" >/dev/null 2>&1')
+        return True
+    if os.path.isfile(path) and not os.path.exists(meta):
+        os.system(f'dvc add "{path}" >/dev/null 2>&1')
+        return True
+    return False
+
+def dvc_push():
+    if not dvc_available():
+        return False
+    os.system('dvc push >/dev/null 2>&1')
+    return True
 
 
 # Convert numpy types to native Python types
@@ -239,10 +279,9 @@ def add_results_to_list(m, upos, all_data, lists, dmatrices, data_dict, unique_l
 
 class Train:
     def __init__(self, name, model, data, uniques,
-                 log_path, args, logger, log_neptune, mlops='None',
-                 log_metrics=None, binary_path=None):
+                 log_path, args, logger,
+                 binary_path=None):
         # self.hparams_names = None
-        self.log_neptune = log_neptune
         self.best_roc_score = -1
         self.args = args
         self.log_path = log_path
@@ -276,7 +315,8 @@ class Train:
         self.iter = 0
         self.model = model
         self.name = name
-        self.mlops = mlops
+        # dvclive setup
+        self.live = None
         self.uniques = uniques
         self.uniques2 = copy.deepcopy(self.uniques)
         self.uniques2['labels'] = None
@@ -536,7 +576,7 @@ class Train:
 
         return data_dict
 
-    def log_shap(self, m, lists, data_dict, run):
+    def log_shap(self, m, lists, data_dict, run, mlops):
         if self.args.log_shap:
             Xs = {
                 'train': data_dict['data']['train'],
@@ -571,10 +611,15 @@ class Train:
                 'model_name': self.args.model_name,
                 'log_path': self.log_path,
             }
-            run = log_shap(run, args_dict)
-            run['log_shap'] = 1
+            if mlops == 'neptune':
+                run = log_shap(run, args_dict, 'neptune')
+            if mlops == 'dvclive':
+                run = log_shap(run, args_dict, 'dvclive')
         else:
-            run['log_shap'] = 0
+            if mlops == 'neptune':
+                run['log_shap'] = 0
+            if mlops == 'dvclive':
+                run.log({'log_shap': 0})
 
     def upos_operations(self, all_data):
         # Basically just takes the samples back into training
@@ -705,6 +750,34 @@ class Train:
             'cats': copy.deepcopy(self.data['cats']),
         }
 
+        # Exclude user-specified batches (substrings, case-insensitive)
+        exclude_patterns = set(getattr(self.args, 'exclude_batches', []) or [])
+        def _filter_split(split_name):
+            if split_name not in all_data['batches_labels']:
+                return
+            batches_arr = np.array(all_data['batches_labels'][split_name])
+            mask = np.array([
+                (str(b).lower() not in exclude_patterns and
+                 not any(pat in str(b).lower() for pat in exclude_patterns))
+                for b in batches_arr
+            ])
+            if split_name in all_data['inputs']:
+                try:
+                    all_data['inputs'][split_name] = all_data['inputs'][split_name].iloc[mask, :]
+                except Exception:
+                    pass
+            for key in ['labels', 'batches', 'batches_labels', 'concs', 'names', 'manips', 'urines', 'cats']:
+                if split_name in all_data.get(key, {}):
+                    try:
+                        all_data[key][split_name] = np.array(all_data[key][split_name])[mask]
+                    except Exception:
+                        try:
+                            all_data[key][split_name] = [all_data[key][split_name][i] for i, keep in enumerate(mask) if keep]
+                        except Exception:
+                            pass
+        for split in list(all_data['batches_labels'].keys()):
+            _filter_split(split)
+
         if self.args.binary:
             all_data['labels']['all'] = np.array(['blanc' if label == 'blanc' else 'bact' for label in all_data['labels']['all']])
         # self.unique_labels devrait disparaitre et remplace par self.uniques['labels']
@@ -723,7 +796,7 @@ class Train:
             all_data['inputs']['test'] = all_data['inputs']['test'].iloc[:, not_zeros_col]
             all_data['inputs']['urinespositives'] = all_data['inputs']['urinespositives'].iloc[:, not_zeros_col]
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             # Create a Neptune run object
             run = neptune.init_run(
                 project=NEPTUNE_PROJECT_NAME,
@@ -742,6 +815,9 @@ class Train:
                 project=NEPTUNE_PROJECT_NAME,
                 api_token=NEPTUNE_API_TOKEN,
             )
+            # Keep references for later artifact logging
+            self.model_version_ref = model
+            self.run_ref = run
             model['hparams'] = run["hparams"] = hparams
             model["csv_file"] = run["csv_file"] = self.args.csv_file
             model["model_name"] = run["model_name"] = self.model_name
@@ -767,6 +843,35 @@ class Train:
             model['batches'] = run['batches'] = '-'.join(self.uniques['batches'])
             model['context'] = run['context'] = 'train'
             model['remove_bad_samples'] = run['remove_bad_samples'] = self.args.remove_bad_samples
+            # Additional context fields
+            try:
+                model['mode'] = run['mode'] = getattr(self.args, 'mode', '')
+                model['features_selection'] = run['features_selection'] = getattr(self.args, 'features_selection', '')
+                model['combat'] = run['combat'] = getattr(self.args, 'combat', '')
+                model['shift'] = run['shift'] = getattr(self.args, 'shift', '')
+                model['device'] = run['device'] = getattr(self.args, 'device', '')
+                model['fp'] = run['fp'] = getattr(self.args, 'fp', '')
+                model['scheduler'] = run['scheduler'] = getattr(self.args, 'scheduler', '')
+                model['dloss'] = run['dloss'] = getattr(self.args, 'dloss', '')
+                model['classif_loss'] = run['classif_loss'] = getattr(self.args, 'classif_loss', '')
+                model['rec_loss'] = run['rec_loss'] = getattr(self.args, 'rec_loss', '')
+                model['early_stop'] = run['early_stop'] = getattr(self.args, 'early_stop', '')
+                model['early_warmup_stop'] = run['early_warmup_stop'] = getattr(self.args, 'early_warmup_stop', '')
+                model['n_layers'] = run['n_layers'] = getattr(self.args, 'n_layers', '')
+                model['ae_layers_max_neurons'] = run['ae_layers_max_neurons'] = getattr(self.args, 'ae_layers_max_neurons', '')
+                model['n_repeats'] = run['n_repeats'] = getattr(self.args, 'n_repeats', '')
+                model['threshold'] = run['threshold'] = param_grid.get('threshold', 0)
+                model['features_cutoff'] = run['features_cutoff'] = param_grid.get('features_cutoff', '')
+                model['exclude_batches'] = run['exclude_batches'] = ','.join(getattr(self.args, 'exclude_batches', []) or [])
+                # Optional augmentation / regularization flags
+                for flag in ['add_noise','normalize','use_mapping','use_sigmoid','use_threshold','use_smoothing','variational','kan','ovr']:
+                    if hasattr(self.args, flag):
+                        model[flag] = run[flag] = getattr(self.args, flag)
+                for flag in ['max_norm','max_warmup','num_workers','clip_val','random_recs','rec_prototype','min_features_importance','patient_bact','colsample_bytree','max_bin','sparse_matrix','xgboost_features','prune_threshold']:
+                    if hasattr(self.args, flag):
+                        model[flag] = run[flag] = getattr(self.args, flag)
+            except Exception as e:
+                print('Neptune extra logging fields failed:', e)
         else:
             model = None
             run = None
@@ -1077,9 +1182,9 @@ class Train:
             lists['mcc']['train'] += [MCC(lists['classes']['train'][-1], lists['preds']['train'][-1])]
             lists['mcc']['valid'] += [MCC(lists['classes']['valid'][-1], lists['preds']['valid'][-1])]
             lists['mcc']['test'] += [MCC(lists['classes']['test'][-1], lists['preds']['test'][-1])]
-                
-            if self.best_scores['acc']['valid'] is None:
-                self.best_scores['acc']['valid'] = 0
+            # Initialize best_scores on first iteration
+            if self.best_scores['mcc']['valid'] is None:
+                self.retrieve_best_scores(lists)
 
             h += 1
 
@@ -1104,12 +1209,18 @@ class Train:
         posurines_df = None  # TODO move somewhere more logical
 
         # Log in neptune the optimal iteration
-        if self.log_neptune:
+        if self.args.log_neptune:
             model["best_iteration"] = run["best_iteration"] = np.round(np.mean([x for x in best_iteration]))
             model["model_size"] = run["model_size"] = get_size_in_mb(m)
 
         lists, posurines_df = self.save_confusion_matrices(all_data, lists, run)
-        if np.mean(lists['mcc']['valid']) > np.mean(self.best_scores['mcc']['valid']):
+        current_valid_mcc_mean = float(np.mean(lists['mcc']['valid'])) if len(lists['mcc']['valid']) > 0 else -np.inf
+        prev_valid_mcc_mean = (
+            float(np.mean(self.best_scores['mcc']['valid']))
+            if isinstance(self.best_scores['mcc']['valid'], list) and len(self.best_scores['mcc']['valid']) > 0
+            else (-np.inf if self.best_scores['mcc']['valid'] is None else float(self.best_scores['mcc']['valid']))
+        )
+        if current_valid_mcc_mean > prev_valid_mcc_mean:
             self.save_roc_curves(lists, run)
             if self.args.log_shap:
                 print('log shap')
@@ -1155,14 +1266,14 @@ class Train:
             # save the features kept
             with open(f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl', 'wb') as f:
                 pickle.dump(data_list['test']['inputs'].columns, f)
-            
-            self.keep_models(scaler_name)
-            # Save the individual scores of each sample with class, #batch
-            self.save_results_df(lists, run)
+
             self.retrieve_best_scores(lists)
-            best_scores = self.save_best_model_hparams(
-                param_grid, other_params, scaler_name, lists['unique_batches'], metrics
-            )
+            if self.keep_models(scaler_name):
+                # Save the individual scores of each sample with class, #batch
+                self.save_results_df(lists, run)
+                best_scores = self.save_best_model_hparams(
+                    param_grid, other_params, scaler_name, lists['unique_batches'], metrics
+                )
         else:
             best_scores = {
                 'nbe': None,
@@ -1178,8 +1289,31 @@ class Train:
                 f'{self.log_path}/saved_models/{self.args.model_name}_posurines_individual_results.csv'
             )
 
-        if self.log_neptune:
+        if self.args.log_neptune:
             log_neptune(run, lists, best_scores)
+        # TODO THIS SHOULD BE in utils or something
+        if self.args.log_dvclive:
+            self.live.next_step()
+            # try:
+            #     # aggregate current best metrics
+            #     to_log = {}
+            #     for m in ['acc', 'mcc']:
+            #         if m in lists and isinstance(lists[m]['valid'], list) and len(lists[m]['valid']) > 0:
+            #             to_log[f'valid/{m}'] = float(np.mean(lists[m]['valid']))
+            #     if m in lists and isinstance(lists[m]['test'], list) and len(lists[m]['test']) > 0:
+            #         to_log[f'test/{m}'] = float(np.mean(lists[m]['test']))
+            # best_scores extras
+            # for k in ['ari', 'ami', 'nbe']:
+            #     if k in best_scores:
+            #         for g in ['train', 'valid', 'test']:
+            #             if g in best_scores[k]:
+            #                 to_log[f'{g}/{k}'] = best_scores[k][g]
+            # for k,v in to_log.items():
+            #     self.live.log_metric(k, v)
+            #     self.live.next_step()
+            # except Exception as e:
+            #     print('dvclive log failed', e)
+        if self.args.log_neptune:
             run.stop()
             model.stop()
 
@@ -1264,6 +1398,103 @@ class Train:
             json.dump(self.best_params_dict_values, read_file)
         # add ari, ami and nbe to run
         return self.best_params_dict
+
+    def load_best_model_hparams(self, load_models: bool = False, load_scaler: bool = True):
+        """
+        Load previously saved best params / values / unique batches (and optionally the model(s) & scaler).
+
+        Returns:
+            dict with keys:
+              params              -> dict of hyperparameters + aggregated metrics
+              values              -> raw per-split score lists (if available)
+              unique_batches      -> structure saved at training
+              scaler_name         -> scaler name stored in params (if present)
+              models              -> list of loaded model objects (if load_models=True)
+              scaler              -> scaler object (if load_scaler and available)
+        """
+        saved_dir = f'{self.log_path}/saved_models'
+        best_params_path = f'{saved_dir}/best_params_{self.name}_{self.args.model_name}.json'
+        best_values_path = f'{saved_dir}/best_params_{self.name}_{self.args.model_name}_values.json'
+        unique_batches_path = f'{saved_dir}/unique_batches_{self.name}_{self.args.model_name}.json'
+
+        def _maybe_dvc_pull(target):
+            # Attempt a silent dvc pull if metafile exists but target missing
+            if not os.path.exists(target) and os.path.exists(target + '.dvc'):
+                try:
+                    os.system(f'dvc pull "{target}" >/dev/null 2>&1')
+                except Exception:
+                    pass
+
+        for p in [best_params_path, best_values_path, unique_batches_path]:
+            _maybe_dvc_pull(p)
+
+        if not os.path.exists(best_params_path):
+            raise FileNotFoundError(f'Best params file not found: {best_params_path}')
+
+        with open(best_params_path, 'r') as rf:
+            self.best_params_dict = json.load(rf)
+        if os.path.exists(best_values_path):
+            with open(best_values_path, 'r') as rf:
+                self.best_params_dict_values = json.load(rf)
+        else:
+            self.best_params_dict_values = {}
+
+        if os.path.exists(unique_batches_path):
+            with open(unique_batches_path, 'r') as rf:
+                unique_batches = json.load(rf)
+        else:
+            unique_batches = {}
+
+        scaler_name = self.best_params_dict.get('scaler', None)
+
+        loaded_models = []
+        scaler_obj = None
+
+        mode_tag = getattr(self.args, 'mode', 'nomode')
+
+        if load_models:
+            # Collect all promoted (non _tmp) model files for this scaler / mode
+            pattern_prefix = f'{self.args.model_name}_{mode_tag}_{scaler_name}_'
+            for fname in sorted(os.listdir(saved_dir)):
+                if fname.startswith(pattern_prefix) and fname.endswith('.pkl') and '_indices_' not in fname \
+                        and '_meta' not in fname and not fname.endswith('_tmp.pkl'):
+                    full_path = os.path.join(saved_dir, fname)
+                    _maybe_dvc_pull(full_path)
+                    try:
+                        with open(full_path, 'rb') as mf:
+                            loaded_models.append(pickle.load(mf))
+                    except Exception as e:
+                        print(f'Warning: failed to load model {fname}: {e}')
+
+        if load_scaler and scaler_name is not None:
+            scaler_path = f'{saved_dir}/scaler_{scaler_name}.pkl'
+            _maybe_dvc_pull(scaler_path)
+            if os.path.exists(scaler_path):
+                try:
+                    with open(scaler_path, 'rb') as sf:
+                        scaler_obj = pickle.load(sf)
+                except Exception as e:
+                    print(f'Warning: failed to load scaler {scaler_name}: {e}')
+
+        # Restore best_scores minimal (means) if lists not present
+        try:
+            for metric in ['acc', 'mcc']:
+                for split in ['train', 'valid', 'test']:
+                    mean_key = f'{split}_{metric}_mean'
+                    if mean_key in self.best_params_dict:
+                        # store as single-element list for compatibility with downstream code
+                        self.best_scores[metric][split] = [self.best_params_dict[mean_key]]
+        except Exception:
+            pass
+
+        return {
+            'params': self.best_params_dict,
+            'values': self.best_params_dict_values,
+            'unique_batches': unique_batches,
+            'scaler_name': scaler_name,
+            'models': loaded_models,
+            'scaler': scaler_obj,
+        }
 
     def make_predictions(self, lists, run):
         blanc_ids = [
@@ -1545,6 +1776,29 @@ class Train:
             self.unique_labels[int(label)] for label in df_test.loc[:, 'preds'].to_numpy()
         ]
 
+        # Provide batches_labels column for downstream logging consistency
+        try:
+            if 'batches_labels' not in df_valid.columns:
+                # Map integer batch indices back to label names if uniques available
+                if hasattr(self, 'uniques') and 'batches_labels' in self.uniques:
+                    batch_map = {i: b for i, b in enumerate(self.uniques['batches_labels'])}
+                    df_valid['batches_labels'] = [batch_map.get(int(b), b) for b in df_valid['batches']]
+                    df_test['batches_labels'] = [batch_map.get(int(b), b) for b in df_test['batches']]
+                elif hasattr(self, 'uniques') and 'batches' in self.uniques:
+                    batch_map = {i: b for i, b in enumerate(self.uniques['batches'])}
+                    df_valid['batches_labels'] = [batch_map.get(int(b), b) for b in df_valid['batches']]
+                    df_test['batches_labels'] = [batch_map.get(int(b), b) for b in df_test['batches']]
+                else:
+                    # Fallback: copy existing batches column
+                    df_valid['batches_labels'] = df_valid['batches']
+                    df_test['batches_labels'] = df_test['batches']
+        except Exception:
+            # On any failure, fallback silently to copying batches
+            if 'batches_labels' not in df_valid.columns:
+                df_valid['batches_labels'] = df_valid.get('batches', [])
+            if 'batches_labels' not in df_test.columns:
+                df_test['batches_labels'] = df_test.get('batches', [])
+
         df_valid.to_csv(f'{self.log_path}/saved_models/{self.args.model_name}_valid_individual_results.csv')
         df_test.to_csv(f'{self.log_path}/saved_models/{self.args.model_name}_test_individual_results.csv')
         run['valid/individual_results'].upload(
@@ -1803,18 +2057,108 @@ class Train:
         """
         Remove the tmp from the name if the models are to be kept because the best yet
         """
-        for f in os.listdir(f'{self.log_path}/saved_models/'):
-            if f.startswith(f'{self.args.model_name}_{scaler_name}') and f.endswith('tmp.pkl'):
-                os.rename(f'{self.log_path}/saved_models/{f}', f'{self.log_path}/saved_models/{f[:-8]}.pkl')
+        mode_tag = getattr(self.args, 'mode', 'nomode')
+        saved_dir = f'{self.log_path}/saved_models/'
+        os.makedirs(saved_dir, exist_ok=True)
 
-        os.rename(
-            f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}_tmp.pkl',
-            f'{self.log_path}/saved_models/columns_after_threshold_{scaler_name}.pkl'
-        )
-        os.rename(
-            f'{self.log_path}/saved_models/scaler_{scaler_name}_tmp.pkl',
-            f'{self.log_path}/saved_models/scaler_{scaler_name}.pkl'
-        )
+        # Determine existing best score (valid_mcc_mean) if present
+        existing_score = None
+        best_params_path = f'{saved_dir}/best_params_{self.name}_{self.args.model_name}.json'
+        if os.path.exists(best_params_path):
+            try:
+                with open(best_params_path, 'r') as rf:
+                    data = json.load(rf)
+                    existing_score = data.get('valid_mcc_mean')
+            except Exception as e:
+                print(f'Could not read existing best params: {e}')
+
+        # New score from current training stored in self.best_scores
+        # Compute new_score: best_scores['mcc']['valid'] stored as list after retrieve_best_scores
+        bs_valid = self.best_scores['mcc']['valid']
+        if isinstance(bs_valid, list) and len(bs_valid) > 0:
+            new_score = float(np.mean(bs_valid))
+        elif isinstance(bs_valid, (float, int)) and bs_valid is not None:
+            new_score = float(bs_valid)
+        else:
+            new_score = None
+
+        # If existing score is better or equal, discard new tmp artifacts
+        if existing_score is not None and new_score is not None and existing_score >= new_score:
+            # Remove tmp artifacts produced this round
+            for f in list(os.listdir(saved_dir)):
+                if f.endswith('_tmp.pkl') and f.startswith(f'{self.args.model_name}_{mode_tag}_{scaler_name}_'):
+                    try:
+                        os.remove(f'{saved_dir}/{f}')
+                    except Exception:
+                        pass
+            for aux in [f'columns_after_threshold_{scaler_name}_tmp.pkl', f'scaler_{scaler_name}_tmp.pkl']:
+                aux_path = f'{saved_dir}/{aux}'
+                if os.path.exists(aux_path):
+                    try:
+                        os.remove(aux_path)
+                    except Exception:
+                        pass
+            print(f'Existing model retained (valid_mcc_mean {existing_score} >= new {new_score}).')
+            return False
+
+        # Otherwise promote tmp artifacts to permanent
+        for f in os.listdir(saved_dir):
+            if f.startswith(f'{self.args.model_name}_{mode_tag}_{scaler_name}_') and f.endswith('_tmp.pkl'):
+                final_name = f[:-8] + '.pkl'
+                os.rename(f'{saved_dir}/{f}', f'{saved_dir}/{final_name}')
+            if f.startswith(f'{self.args.model_name}_{mode_tag}_{scaler_name}_') and f.endswith('_meta_tmp.json'):
+                final_name = f[:-13] + '_meta.json'
+                os.rename(f'{saved_dir}/{f}', f'{saved_dir}/{final_name}')
+
+        # Promote auxiliary files if present
+        aux_map = {
+            f'columns_after_threshold_{scaler_name}_tmp.pkl': f'columns_after_threshold_{scaler_name}.pkl',
+            f'scaler_{scaler_name}_tmp.pkl': f'scaler_{scaler_name}.pkl'
+        }
+        for tmp_name, final_name in aux_map.items():
+            tmp_path = f'{saved_dir}/{tmp_name}'
+            if os.path.exists(tmp_path):
+                try:
+                    os.rename(tmp_path, f'{saved_dir}/{final_name}')
+                except FileExistsError:
+                    # Overwrite only if better score (we already established it's better)
+                    try:
+                        os.remove(f'{saved_dir}/{final_name}')
+                        os.rename(tmp_path, f'{saved_dir}/{final_name}')
+                    except Exception as e:
+                        print(f'Could not replace {final_name}: {e}')
+        print(f'New best model saved (valid_mcc_mean {new_score} > {existing_score}).')
+        # DVC track promoted artifacts
+        try:
+            promoted = []
+            for f in os.listdir(saved_dir):
+                if f.startswith(f'{self.args.model_name}_{mode_tag}_{scaler_name}_') and f.endswith('.pkl'):
+                    promoted.append(os.path.join(saved_dir, f))
+                if f.startswith(f'{self.args.model_name}_{mode_tag}_{scaler_name}_') and f.endswith('_meta.json'):
+                    promoted.append(os.path.join(saved_dir, f))
+            any_added = False
+            for p in promoted:
+                if dvc_add(p):
+                    any_added = True
+            if any_added:
+                # stage .dvc metafiles
+                os.system('git add ' + ' '.join(p + '.dvc' for p in promoted if os.path.exists(p + '.dvc')) + ' >/dev/null 2>&1')
+                dvc_push()
+            # Neptune artifact logging (if run/model available)
+            if getattr(self, 'log_neptune', False):
+                try:
+                    # capture sizes
+                    for p in promoted:
+                        if os.path.isfile(p):
+                            sz = os.path.getsize(p)
+                            if hasattr(self, 'model_version_ref'):
+                                self.model_version_ref[f'artifacts/{os.path.basename(p)}/bytes'] = int(sz)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"Warning: DVC tracking of best model failed: {e}")
+
+        return True
 
     def remove_models(self, scaler_name: str):
         try:
@@ -1867,18 +2211,44 @@ class Train:
             json.dump(self.unique_labels.tolist(), read_file)
 
         # save model
-        with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_tmp.pkl', 'wb') as f:
+        mode_tag = getattr(self.args, 'mode', 'nomode')
+        with open(f'{self.log_path}/saved_models/{self.args.model_name}_{mode_tag}_{scaler_name}_{i}_tmp.pkl', 'wb') as f:
             pickle.dump(m, f)
+        # metadata snapshot (temporary). Best model promotion will rename _meta_tmp.json
+        try:
+            meta = {
+                'model_name': self.args.model_name,
+                'mode': mode_tag,
+                'scaler': scaler_name,
+                'repeat_index': i,
+                'unique_labels': self.unique_labels.tolist(),
+                'timestamp_utc': datetime.datetime.utcnow().isoformat() + 'Z',
+                'args': {k: (v if isinstance(v, (int, float, str, bool)) or v is None else str(v))
+                         for k, v in vars(self.args).items() if not k.startswith('_')},
+                'hparams': getattr(self, 'best_params_dict', {}),
+                'metrics_snapshot': {
+                    'train_acc_mean': float(np.mean(self.best_scores['acc']['train'])) if self.best_scores['acc']['train'] else None,
+                    'valid_acc_mean': float(np.mean(self.best_scores['acc']['valid'])) if self.best_scores['acc']['valid'] else None,
+                    'test_acc_mean': float(np.mean(self.best_scores['acc']['test'])) if self.best_scores['acc']['test'] else None,
+                    'train_mcc_mean': float(np.mean(self.best_scores['mcc']['train'])) if self.best_scores['mcc']['train'] else None,
+                    'valid_mcc_mean': float(np.mean(self.best_scores['mcc']['valid'])) if self.best_scores['mcc']['valid'] else None,
+                    'test_mcc_mean': float(np.mean(self.best_scores['mcc']['test'])) if self.best_scores['mcc']['test'] else None,
+                }
+            }
+            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{mode_tag}_{scaler_name}_{i}_meta_tmp.json', 'w') as jf:
+                json.dump(meta, jf, indent=2)
+        except Exception as e:
+            print(f'Warning: failed to write metadata for model repeat {i}: {e}')
 
         if lists is not None:
             # save indices
-            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_train_indices_tmp.pkl',
+            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{mode_tag}_{scaler_name}_{i}_train_indices_tmp.pkl',
                       'wb') as f:
                 pickle.dump(lists['inds']['train'][i], f)
-            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_valid_indices_tmp.pkl',
+            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{mode_tag}_{scaler_name}_{i}_valid_indices_tmp.pkl',
                       'wb') as f:
                 pickle.dump(lists['inds']['valid'][i], f)
-            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{scaler_name}_{i}_test_indices_tmp.pkl',
+            with open(f'{self.log_path}/saved_models/{self.args.model_name}_{mode_tag}_{scaler_name}_{i}_test_indices_tmp.pkl',
                       'wb') as f:
                 pickle.dump(lists['inds']['test'][i], f)
 
