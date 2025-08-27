@@ -1,0 +1,30 @@
+1. Remove meta data (dataset.py). 
+2. (DONE) In dataset.py, remove useless all_set, valid_set2, test_set2
+3. (DONE) In train_cnn.gp, remove variable nu
+4. (DONE) Get the data in the __init__ method of Train. the get_bacteria_images_ms2 object should receive the data already loaded, will save a lot of time
+5. Remove mzp & rtp?
+6. (DONE) Make the valid and test splits group split that never repeat the same batch. In every split, if a batch is in valid once it wont be again. if a batch is in test once it wont be again.
+7. Montrer evolution en ajoutant des batches 
+8. Ajout autres métriques: 
+    a. AUC
+9. Utiliser MLOps (mlflow, tensorboard, neptune...)
+    a. Observer mcc vs 
+        i. threshold (minimum percentage of not zeros)
+        ii. Coordinates cropped (e.g. min=mz80, max=mz1200, min=rt140, max=rt320)
+        iii. mz and rt bins
+        iv. Sum over logged mz_parents?
+        v. Other relevant hyperparameters
+    b. mcc par batch dans batch leave out (test & valid)
+10. (Done) Semble avoir une erreur dans le leave batch out de 7 batches: certaines bacteries atteignent pas 24
+    Finalement pas d'erreur
+11. TROUVER UNE ZONE dans images?
+12. Graphs
+    a. Scores per batch when trained individually
+    b. Scores per class when trained individually
+    c. Scores per batch in the multiclass model
+    d. Scores per class in the multiclass model
+    e. 
+13. Add threshold, min_mz, max_mz, min_rt, max_rt, hyperparameter (use thr0.0 and adjust it each hparam iteration)
+14. differents thresholds pour differents modeles? Meilleur binaire=0.1, meilleur multi=0.0
+15. Faire graphs skopt
+16. 

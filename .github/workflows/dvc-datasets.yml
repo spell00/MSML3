@@ -1,0 +1,65 @@
+name: DVC Dataset Sync
+
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - 'resources/**'
+      - 'results/**'
+      - 'dvc_commands.sh'
+      - '.github/workflows/dvc-datasets.yml'
+
+jobs:
+  dvc-sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      DVC_REMOTE_URL: ${{ secrets.DVC_REMOTE_URL }}
+      # Optionally for S3: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_DEFAULT_REGION
+      # Or for SSH remotes: DVC_SSH_USER, DVC_SSH_PASSWORD / SSH_PRIVATE_KEY etc.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+            python-version: '3.11'
+
+      - name: Install DVC (core + optional remotes)
+        run: |
+          pip install --upgrade pip
+          pip install dvc[dvclive,s3,ssh]==3.*
+
+      - name: Configure SSH (if using SSH remote)
+        if: env.DVC_REMOTE_URL != '' && contains(env.DVC_REMOTE_URL, 'ssh://')
+        run: |
+          if [ "${{ secrets.DVC_SSH_PRIVATE_KEY }}" != "" ]; then
+            mkdir -p ~/.ssh
+            echo "${{ secrets.DVC_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+            chmod 600 ~/.ssh/id_rsa
+            ssh-keyscan -H $(echo "$DVC_REMOTE_URL" | sed 's#ssh://##' | cut -d/ -f1) >> ~/.ssh/known_hosts 2>/dev/null || true
+          fi
+
+      - name: Run DVC tracking script
+        run: |
+          bash dvc_commands.sh
+
+      - name: Commit DVC metafiles (if changed)
+        run: |
+          git config user.name 'github-actions'
+            git config user.email 'github-actions@users.noreply.github.com'
+            if ! git diff --cached --quiet; then
+              git commit -m 'chore: update DVC dataset tracking' || true
+              git push
+            else
+              echo 'No DVC metadata changes to commit.'
+            fi
+
+      - name: List DVC status
+        run: |
+          dvc status -c || true
+          dvc list storage . || true

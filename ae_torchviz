@@ -1,0 +1,68 @@
+digraph {
+	graph [size="12,12"]
+	node [align=left fontname=monospace fontsize=10 height=0.2 ranksep=0.1 shape=box style=filled]
+	140468414745312 [label="
+ (1472)" fillcolor=darkolivegreen1]
+	140468407421344 [label="MeanBackward1
+----------------------------
+dim           :         (0,)
+keepdim       :        False
+self_sym_numel:      2787968
+self_sym_sizes: (1894, 1472)"]
+	140468407428928 -> 140468407421344
+	140468407428928 -> 140468754101920 [dir=none]
+	140468754101920 [label="mat1
+ (1894, 6443)" fillcolor=orange]
+	140468407428928 -> 140468756654064 [dir=none]
+	140468756654064 [label="mat2
+ (6443, 1472)" fillcolor=orange]
+	140468407428928 [label="AddmmBackward0
+--------------------------------
+alpha           :              1
+beta            :              1
+mat1            : [saved tensor]
+mat1_sym_sizes  :   (1894, 6443)
+mat1_sym_strides:      (6443, 1)
+mat2            : [saved tensor]
+mat2_sym_sizes  :   (6443, 1472)
+mat2_sym_strides:      (1, 6443)"]
+	140468407425376 -> 140468407428928
+	140468759550432 [label="dec.layers.layer1.0.bias
+ (1472)" fillcolor=lightblue]
+	140468759550432 -> 140468407425376
+	140468407425376 [label=AccumulateGrad]
+	140468407424608 -> 140468407428928
+	140468407424608 -> 140468759544512 [dir=none]
+	140468759544512 [label="mat1
+ (1894, 1472)" fillcolor=orange]
+	140468407424608 [label="AddmmBackward0
+--------------------------------
+alpha           :              1
+beta            :              1
+mat1            : [saved tensor]
+mat1_sym_sizes  :   (1894, 1472)
+mat1_sym_strides:             ()
+mat2            :           None
+mat2_sym_sizes  :   (1472, 6443)
+mat2_sym_strides:      (1, 1472)"]
+	140468407424944 -> 140468407424608
+	140468759553392 [label="enc.layers.0.0.bias
+ (6443)" fillcolor=lightblue]
+	140468759553392 -> 140468407424944
+	140468407424944 [label=AccumulateGrad]
+	140468407429312 -> 140468407424608
+	140468407429312 [label=TBackward0]
+	140468407425472 -> 140468407429312
+	140468751734304 [label="enc.layers.0.0.weight
+ (6443, 1472)" fillcolor=lightblue]
+	140468751734304 -> 140468407425472
+	140468407425472 [label=AccumulateGrad]
+	140468407423888 -> 140468407428928
+	140468407423888 [label=TBackward0]
+	140468407421440 -> 140468407423888
+	140468407436208 [label="dec.layers.layer1.0.weight
+ (1472, 6443)" fillcolor=lightblue]
+	140468407436208 -> 140468407421440
+	140468407421440 [label=AccumulateGrad]
+	140468407421344 -> 140468414745312
+}
