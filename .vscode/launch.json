@@ -266,7 +266,7 @@
             "justMyCode": true,
             "allowMultipleSessions": true,
             "args": [
-                "--n_features=1000",
+                "--n_features=-1",
                 "--binary=0",
                 "--model_name=xgboost",
                 "--mode=logmax",

@@ -1,7 +1,7 @@
 model_name: binary0_xgboost
 groupkfold: 1
 dataset_name: MSML-Bacteria
-scaler_name: zscore
+scaler_name: minmax
 mz_min: 0
 mz_max: 10000
 rt_min: 0
@@ -9,14 +9,14 @@ rt_max: 320
 mz_bin: 10
 rt_bin: 10
 path: 
-  results/multi/mz10/rt10/ms2/200spd/thr0.0/logmax/all/BPatients-cultures_pures-b15-b14-b13-b12-b11-b10-b9-b8-b7-b6-b5-b4-b3-b2-b1_binary0_1000_gkf1_ovr0_mz0-10000rt0-320_na_h/xgboost/
+  results/multi/mz10/rt10/ms2/200spd/thr0.0/logmax/all/BPatients-cultures_pures-b15-b14-b13-b12-b11-b10-b9-b8-b7-b6-b5-b4-b3-b2-b1_binary0_-1_gkf1_ovr0_mz0-10000rt0-320_na_h/xgboost/
 concs: na,h
 binary: 0
 spd: 200
 ovr: 0
 train_on: all
-n_features: 1000
-total_features: 1000
+n_features: -1
+total_features: 109440
 ms_level: 2
 log1p: 0
 batches: 
